@@ -1,0 +1,8 @@
+{
+  "base_frame": "world",
+  "jacobian_frame": "world",
+  "pose_error_frame": "world",
+  "orientation_error_type": "so3_log",
+  "quaternion_order": "wxyz",
+  "end_effector_site": "unresolved"
+}

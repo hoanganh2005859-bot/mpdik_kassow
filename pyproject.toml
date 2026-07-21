@@ -1,0 +1,10 @@
+[project]
+name = "kassow-kr810-trajectory-tier0-tier4"
+version = "1.0.0"
+description = "Trajectory-first kinematic validation and evaluation dataset for the Kassow KR810 (Tier 0-4)."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"

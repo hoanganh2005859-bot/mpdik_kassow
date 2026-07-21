@@ -1,0 +1,26 @@
+{
+  "robot_name": "Kassow KR810",
+  "n_joints": 7,
+  "joint_names": [
+    "joint_1",
+    "joint_2",
+    "joint_3",
+    "joint_4",
+    "joint_5",
+    "joint_6",
+    "joint_7"
+  ],
+  "asset_model_path": "assets/kr810.xml",
+  "source_urdf_path": "assets/kr810.urdf",
+  "quaternion_order": "wxyz",
+  "position_unit": "meter",
+  "joint_angle_unit": "radian",
+  "orientation_report_unit": "degree",
+  "asset_status": "unresolved",
+  "end_effector_site": "unresolved",
+  "end_effector_link": "end_effector",
+  "nq": "unresolved",
+  "nv": "unresolved",
+  "operational_joint_limits": "unresolved",
+  "velocity_limits": "unresolved"
+}

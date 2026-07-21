@@ -1,0 +1,16 @@
+{
+  "random_seed": 42,
+  "validation_fk_samples": 1000,
+  "validation_jacobian_samples": 200,
+  "finite_difference_epsilon": 1e-6,
+  "point_ik_samples_per_group": 200,
+  "difficulty_groups": [
+    "near_target",
+    "medium_target",
+    "far_target",
+    "large_orientation_change",
+    "near_joint_limit",
+    "near_singularity"
+  ],
+  "generation_status": "not_generated"
+}

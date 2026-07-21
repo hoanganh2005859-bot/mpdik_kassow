@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "waypoint_result_schema.json",
+  "title": "Waypoint IK Result",
+  "description": "Result of solving IK (Tier 1 point or Tier 2 sequential) for a single target pose. Position error unit: meter. Orientation error unit: degree. Joint angle unit: radian.",
+  "type": "object",
+  "required": [
+    "waypoint_id",
+    "converged",
+    "joint_configuration_rad",
+    "position_error_m",
+    "orientation_error_deg",
+    "iterations"
+  ],
+  "properties": {
+    "waypoint_id": {
+      "type": "string",
+      "description": "Identifier of the sample or waypoint this result corresponds to."
+    },
+    "converged": {
+      "type": "boolean",
+      "description": "Whether the solver met the position/orientation success thresholds within max_iterations."
+    },
+    "joint_configuration_rad": {
+      "type": "array",
+      "description": "Resulting joint configuration [q1..q7] in radians, in joint_1..joint_7 order.",
+      "items": { "type": "number" },
+      "minItems": 7,
+      "maxItems": 7
+    },
+    "position_error_m": {
+      "type": "number",
+      "description": "Euclidean position error between achieved and target end-effector position, in meters."
+    },
+    "orientation_error_deg": {
+      "type": "number",
+      "description": "SO(3) logarithm (geodesic) orientation error between achieved and target end-effector orientation, in degrees."
+    },
+    "iterations": {
+      "type": "integer",
+      "description": "Number of DLS iterations performed for this solve."
+    },
+    "singular_value_min": {
+      "type": "number",
+      "description": "Optional smallest singular value of the end-effector Jacobian at the final configuration (singularity proximity indicator)."
+    }
+  },
+  "additionalProperties": false
+}

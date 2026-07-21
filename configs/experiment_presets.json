@@ -1,0 +1,18 @@
+{
+  "smoke": {
+    "point_sample_limit": 30,
+    "validation_fk_samples": 20,
+    "validation_jacobian_samples": 5,
+    "selected_trajectories": ["line_fixed", "circle_fixed"],
+    "trajectory_trial_limit": 4,
+    "tiers": ["tier0", "tier1", "tier2", "tier3", "tier4"]
+  },
+  "full": {
+    "point_sample_limit": "all",
+    "validation_fk_samples": "all",
+    "validation_jacobian_samples": "all",
+    "selected_trajectories": "all",
+    "trajectory_trial_limit": "all",
+    "tiers": ["tier0", "tier1", "tier2", "tier3", "tier4"]
+  }
+}

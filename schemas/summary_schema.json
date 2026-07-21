@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "summary_schema.json",
+  "title": "Tier 0-4 Run Summary",
+  "description": "Top-level summary of a Tier 0-4 pipeline run, aggregating per-tier status against project-defined acceptance criteria (not ISO 9283 certification).",
+  "type": "object",
+  "required": [
+    "preset",
+    "tiers"
+  ],
+  "properties": {
+    "preset": {
+      "type": "string",
+      "description": "Experiment preset used for this run (e.g. 'smoke' or 'full'), per configs/experiment_presets.json."
+    },
+    "tiers": {
+      "type": "object",
+      "description": "Per-tier summary status, keyed by tier name.",
+      "required": ["tier0", "tier1", "tier2", "tier3", "tier4"],
+      "properties": {
+        "tier0": { "$ref": "#/$defs/tier_summary" },
+        "tier1": { "$ref": "#/$defs/tier_summary" },
+        "tier2": { "$ref": "#/$defs/tier_summary" },
+        "tier3": { "$ref": "#/$defs/tier_summary" },
+        "tier4": { "$ref": "#/$defs/tier_summary" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "tier_summary": {
+      "type": "object",
+      "description": "Summary status for a single tier.",
+      "required": ["status", "sample_count"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["not_run", "passed", "failed"],
+          "description": "Outcome of this tier against project acceptance criteria."
+        },
+        "sample_count": {
+          "type": "integer",
+          "description": "Number of samples, waypoints, or trials evaluated in this tier."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional free-text notes about this tier's run."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

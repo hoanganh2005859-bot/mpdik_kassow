@@ -1,0 +1,17 @@
+{
+  "position_threshold_m": 0.006,
+  "orientation_threshold_deg": 10.0,
+  "kinematic_position_rmse_target_mm": 4.0,
+  "kinematic_position_p95_target_mm": 6.0,
+  "kinematic_position_max_target_mm": 10.0,
+  "orientation_p95_target_deg": 10.0,
+  "minimum_waypoint_success_rate": 0.95,
+  "required_trajectory_completion_rate": 1.0,
+  "compute_iso9283": true,
+  "compute_cross_track_error": true,
+  "compute_singularity_metrics": true,
+  "compute_joint_smoothness": true,
+  "confidence_level": 0.95,
+  "bootstrap_resamples": 10000,
+  "note": "All *_target_mm, *_target_deg, and rate thresholds above are project-defined acceptance criteria for this dataset's evaluation pipeline, not ISO 9283 certification limits."
+}

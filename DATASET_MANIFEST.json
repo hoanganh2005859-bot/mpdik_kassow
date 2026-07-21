@@ -1,0 +1,48 @@
+{
+  "dataset_name": "kassow-kr810-trajectory-tier0-tier4",
+  "version": "1.0.0",
+  "status": "scaffold",
+  "scope": {
+    "tiers_included": [
+      "tier0_kinematics_validation",
+      "tier1_point_dls",
+      "tier2_sequential_dls",
+      "tier3_trajectory_tracking",
+      "tier4_joint_feasibility_smoothness"
+    ],
+    "includes_dynamic_control": false,
+    "includes_ppo": false,
+    "includes_mpdik": false,
+    "includes_mappo": false
+  },
+  "robot": {
+    "name": "Kassow KR810",
+    "degrees_of_freedom": 7,
+    "simulation_engine": "MuJoCo"
+  },
+  "assets": {
+    "status": "not_integrated",
+    "expected_model_path": "assets/kr810.xml",
+    "expected_urdf_path": "assets/kr810.urdf",
+    "expected_mesh_path": "assets/meshes/a810"
+  },
+  "conventions": {
+    "position_unit": "meter",
+    "joint_angle_unit": "radian",
+    "orientation_report_unit": "degree",
+    "quaternion_order": "wxyz",
+    "rotation_error_type": "so3_log"
+  },
+  "benchmark_status": "not_generated",
+  "trajectories_status": "not_generated",
+  "acceptance_criteria": {
+    "note": "The following thresholds are project-defined acceptance criteria for this dataset's own evaluation pipeline. They are not ISO 9283 certification limits and no ISO 9283 certification is claimed.",
+    "kinematic_position_rmse_target_mm": 4.0,
+    "kinematic_position_p95_target_mm": 6.0,
+    "kinematic_position_max_target_mm": 10.0,
+    "orientation_p95_target_deg": 10.0
+  },
+  "notes": [
+    "This manifest describes a Stage 1 scaffold. No checksums, generation timestamps, or test results are recorded because no data or model has been generated or validated yet."
+  ]
+}

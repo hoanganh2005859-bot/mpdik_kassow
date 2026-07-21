@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trajectory_result_schema.json",
+  "title": "Trajectory Trial Result",
+  "description": "Aggregated Tier 3/4 result for one trajectory trial. Position error unit: millimeter (report scale). Orientation error unit: degree. Joint angle unit: radian.",
+  "type": "object",
+  "required": [
+    "trial_id",
+    "trajectory_id",
+    "completion_rate",
+    "position_rmse_mm",
+    "position_p95_mm",
+    "position_max_mm",
+    "orientation_p95_deg"
+  ],
+  "properties": {
+    "trial_id": {
+      "type": "string",
+      "description": "Unique identifier for this trial, matching trajectories/trajectory_trials.csv."
+    },
+    "trajectory_id": {
+      "type": "string",
+      "description": "Identifier of the trajectory this trial was run against."
+    },
+    "completion_rate": {
+      "type": "number",
+      "description": "Fraction of waypoints for which sequential IK converged, in [0, 1].",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "position_rmse_mm": {
+      "type": "number",
+      "description": "Root-mean-square Cartesian position tracking error across the trial, in millimeters."
+    },
+    "position_p95_mm": {
+      "type": "number",
+      "description": "95th percentile Cartesian position tracking error across the trial, in millimeters."
+    },
+    "position_max_mm": {
+      "type": "number",
+      "description": "Maximum Cartesian position tracking error across the trial, in millimeters."
+    },
+    "orientation_p95_deg": {
+      "type": "number",
+      "description": "95th percentile SO(3) logarithm orientation tracking error across the trial, in degrees."
+    },
+    "cross_track_rmse_mm": {
+      "type": "number",
+      "description": "Optional root-mean-square cross-track (perpendicular path deviation) error, in millimeters."
+    },
+    "joint_velocity_max_rad_s": {
+      "type": "array",
+      "description": "Optional per-joint maximum velocity observed [q1..q7] in radians/second.",
+      "items": { "type": "number" },
+      "minItems": 7,
+      "maxItems": 7
+    },
+    "meets_project_acceptance_criteria": {
+      "type": "boolean",
+      "description": "Whether this trial meets the project-defined thresholds in configs/evaluation_config.json (not an ISO 9283 certification claim)."
+    }
+  },
+  "additionalProperties": false
+}

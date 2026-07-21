@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trajectory_schema.json",
+  "title": "Trajectory Definition",
+  "description": "A Tier 2-4 Cartesian trajectory: an ordered sequence of timestamped end-effector waypoints. Position unit: meter. Time unit: second. Quaternion order: wxyz.",
+  "type": "object",
+  "required": [
+    "trajectory_id",
+    "type",
+    "orientation_mode",
+    "closed_path",
+    "waypoints"
+  ],
+  "properties": {
+    "trajectory_id": {
+      "type": "string",
+      "description": "Unique identifier for this trajectory."
+    },
+    "type": {
+      "type": "string",
+      "enum": ["line", "circle", "figure8", "helix", "custom"],
+      "description": "Trajectory shape type, per configs/trajectory_config.json."
+    },
+    "orientation_mode": {
+      "type": "string",
+      "enum": ["fixed", "variable"],
+      "description": "Whether end-effector orientation is held fixed or varies along the trajectory."
+    },
+    "closed_path": {
+      "type": "boolean",
+      "description": "Whether the trajectory returns to its starting pose (closed loop)."
+    },
+    "duration_s": {
+      "type": "number",
+      "description": "Total nominal duration of the trajectory in seconds."
+    },
+    "control_period_s": {
+      "type": "number",
+      "description": "Nominal time step between consecutive waypoints, in seconds."
+    },
+    "waypoints": {
+      "type": "array",
+      "description": "Ordered list of waypoints comprising the trajectory.",
+      "items": {
+        "type": "object",
+        "required": ["time_s", "position_m", "quaternion_wxyz"],
+        "properties": {
+          "time_s": {
+            "type": "number",
+            "description": "Timestamp of this waypoint in seconds from trajectory start."
+          },
+          "position_m": {
+            "type": "array",
+            "description": "End-effector position [x, y, z] in meters, world frame.",
+            "items": { "type": "number" },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "quaternion_wxyz": {
+            "type": "array",
+            "description": "End-effector orientation as a unit quaternion [w, x, y, z] (wxyz order), world frame.",
+            "items": { "type": "number" },
+            "minItems": 4,
+            "maxItems": 4
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
