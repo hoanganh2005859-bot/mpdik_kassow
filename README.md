@@ -155,9 +155,19 @@ acceleration limits are configured), its status is reported as
 
 - **Local**: create a virtual environment, install `requirements.txt`, then
   run `python -m pipelines.run_tier0_to_tier4` as above.
-- **Kaggle**: a notebook under `notebooks/` will wrap the same pipeline
-  entry points once one exists; no notebook has been generated yet (Stage 6
-  does not add one).
+- **Kaggle**: `notebooks/KR810_Tier0_Tier4_Kaggle_Template.ipynb` wraps the
+  same `pipelines.run_tier0_to_tier4` entry point for Kaggle execution (see
+  `notebooks/README.md` for the full walkthrough). Upload the repository as a
+  Kaggle Dataset and attach it to a new notebook (Kaggle input is read-only,
+  so the notebook copies the project into `/kaggle/working` before running
+  anything); no GPU is required -- the pipeline runs entirely on CPU and
+  never renders MuJoCo. Cell 2 exposes the same `--preset smoke|full` choice
+  and CLI overrides as the command line above, and the final cell packages
+  `FINAL_SUMMARY.json`, `run_manifest.json`, every tier's output, and figures
+  into a ZIP under `/kaggle/working`. As with the local CLI, a smoke run's
+  numbers are a fast sanity check, not this dataset's official research
+  result, and the notebook covers Tier 0-4 kinematic evaluation only (no
+  dynamics, PPO, MPDIK, or MAPPO).
 
 ## On acceptance thresholds
 
