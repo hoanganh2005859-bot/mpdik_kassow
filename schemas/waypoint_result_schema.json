@@ -2,47 +2,160 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "waypoint_result_schema.json",
   "title": "Waypoint IK Result",
-  "description": "Result of solving IK (Tier 1 point or Tier 2 sequential) for a single target pose. Position error unit: meter. Orientation error unit: degree. Joint angle unit: radian.",
+  "description": "Result of one Tier 2 sequential-DLS solve for a single waypoint (see algorithms.result_types.WaypointResult and algorithms.sequential_dls). Position error unit: meter. Orientation error unit: radian and degree (both reported). Joint angle unit: radian. Quaternion order: wxyz.",
   "type": "object",
   "required": [
+    "trial_id",
+    "trajectory_id",
+    "trial_category",
+    "method",
     "waypoint_id",
-    "converged",
-    "joint_configuration_rad",
+    "time_s",
+    "q_initial_used",
+    "q_solution",
+    "target_position",
+    "actual_position",
+    "target_quaternion",
+    "actual_quaternion",
     "position_error_m",
+    "orientation_error_rad",
     "orientation_error_deg",
-    "iterations"
+    "success",
+    "iterations",
+    "solve_time_ms",
+    "sigma_min",
+    "condition_number",
+    "manipulability",
+    "minimum_joint_limit_margin",
+    "recovered_after_previous_failure",
+    "failure_reason"
   ],
   "properties": {
-    "waypoint_id": {
+    "trial_id": {
       "type": "string",
-      "description": "Identifier of the sample or waypoint this result corresponds to."
+      "description": "Identifier of the trajectory trial this waypoint belongs to, matching trajectories/trajectory_trials.csv."
     },
-    "converged": {
-      "type": "boolean",
-      "description": "Whether the solver met the position/orientation success thresholds within max_iterations."
+    "trajectory_id": {
+      "type": "string",
+      "description": "Identifier of the trajectory this waypoint belongs to, matching trajectories/trajectory_manifest.csv."
     },
-    "joint_configuration_rad": {
+    "trial_category": {
+      "type": "string",
+      "enum": ["repeatability", "robustness"],
+      "description": "Trial category, per trajectories/trajectory_trials.csv."
+    },
+    "method": {
+      "type": "string",
+      "enum": ["warm_start", "cold_start"],
+      "description": "Which sequential-DLS algorithm variant produced this result."
+    },
+    "waypoint_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero-based waypoint index within the trajectory."
+    },
+    "time_s": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Speed-scale-adjusted timestamp of this waypoint, in seconds from trial start."
+    },
+    "q_initial_used": {
       "type": "array",
-      "description": "Resulting joint configuration [q1..q7] in radians, in joint_1..joint_7 order.",
+      "description": "Joint configuration [q1..q7] in radians actually used as the solver's starting guess for this waypoint (see the warm-start recovery policy in algorithms.warm_start_dls).",
       "items": { "type": "number" },
       "minItems": 7,
       "maxItems": 7
     },
+    "q_solution": {
+      "type": "array",
+      "description": "Resulting joint configuration [q1..q7] in radians.",
+      "items": { "type": "number" },
+      "minItems": 7,
+      "maxItems": 7
+    },
+    "target_position": {
+      "type": "array",
+      "description": "Commanded end-effector position [x, y, z] in meters, world frame.",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "actual_position": {
+      "type": "array",
+      "description": "Achieved end-effector position [x, y, z] in meters (forward kinematics of q_solution), world frame.",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "target_quaternion": {
+      "type": "array",
+      "description": "Commanded end-effector orientation as a unit quaternion [w, x, y, z], world frame.",
+      "items": { "type": "number" },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "actual_quaternion": {
+      "type": "array",
+      "description": "Achieved end-effector orientation as a unit quaternion [w, x, y, z] (forward kinematics of q_solution), world frame.",
+      "items": { "type": "number" },
+      "minItems": 4,
+      "maxItems": 4
+    },
     "position_error_m": {
       "type": "number",
-      "description": "Euclidean position error between achieved and target end-effector position, in meters."
+      "minimum": 0,
+      "description": "Euclidean distance between target_position and actual_position, meters."
+    },
+    "orientation_error_rad": {
+      "type": "number",
+      "minimum": 0,
+      "description": "SO(3) geodesic orientation error between target and actual orientation, radians."
     },
     "orientation_error_deg": {
       "type": "number",
-      "description": "SO(3) logarithm (geodesic) orientation error between achieved and target end-effector orientation, in degrees."
+      "minimum": 0,
+      "description": "orientation_error_rad converted to degrees."
+    },
+    "success": {
+      "type": "boolean",
+      "description": "Whether the DLS solve met the configured position/orientation success thresholds within max_iterations."
     },
     "iterations": {
       "type": "integer",
-      "description": "Number of DLS iterations performed for this solve."
+      "minimum": 0,
+      "description": "Number of DLS iterations performed for this waypoint's solve."
     },
-    "singular_value_min": {
+    "solve_time_ms": {
       "type": "number",
-      "description": "Optional smallest singular value of the end-effector Jacobian at the final configuration (singularity proximity indicator)."
+      "minimum": 0,
+      "description": "Wall-clock solve time for this waypoint only (excludes I/O), milliseconds."
+    },
+    "sigma_min": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Smallest singular value of the end-effector Jacobian at q_solution."
+    },
+    "condition_number": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Condition number (sigma_max / sigma_min) of the end-effector Jacobian at q_solution."
+    },
+    "manipulability": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Yoshikawa manipulability measure of the end-effector Jacobian at q_solution."
+    },
+    "minimum_joint_limit_margin": {
+      "type": "number",
+      "description": "Worst-case normalized operational joint-limit margin at q_solution (see kinematics.joint_limit_utils)."
+    },
+    "recovered_after_previous_failure": {
+      "type": "boolean",
+      "description": "True only if the previous waypoint in this trial failed and this waypoint's solve succeeded (see algorithms.warm_start_dls recovery policy)."
+    },
+    "failure_reason": {
+      "type": ["string", "null"],
+      "description": "Solver failure reason (from kinematics.dls_solver.DLSResult.failure_reason) if success is false, otherwise null."
     }
   },
   "additionalProperties": false

@@ -1,64 +1,77 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "trajectory_result_schema.json",
-  "title": "Trajectory Trial Result",
-  "description": "Aggregated Tier 3/4 result for one trajectory trial. Position error unit: millimeter (report scale). Orientation error unit: degree. Joint angle unit: radian.",
+  "title": "Trajectory Trial Summary",
+  "description": "Aggregated Tier 2-4 evaluation result for one (trial_id, method) sequential-DLS run (see evaluation.result_types.TrajectoryTrialSummary). Position error unit: meter. Orientation error unit: degree. Joint angle unit: radian.",
   "type": "object",
   "required": [
     "trial_id",
     "trajectory_id",
-    "completion_rate",
-    "position_rmse_mm",
-    "position_p95_mm",
-    "position_max_mm",
-    "orientation_p95_deg"
+    "trial_category",
+    "method",
+    "repeat_id",
+    "seed",
+    "speed_scale",
+    "control_period_s",
+    "waypoint_count",
+    "successful_waypoints",
+    "failed_waypoints",
+    "waypoint_success_rate",
+    "full_trajectory_completed",
+    "maximum_failure_streak",
+    "recovery_rate",
+    "position_rmse_m",
+    "position_mae_m",
+    "position_median_m",
+    "position_p95_m",
+    "position_max_m",
+    "orientation_rmse_deg",
+    "orientation_p95_deg",
+    "orientation_max_deg",
+    "mean_iterations",
+    "p95_iterations",
+    "mean_solve_time_ms",
+    "p95_solve_time_ms",
+    "deadline_miss_rate",
+    "minimum_sigma_min",
+    "maximum_condition_number",
+    "minimum_joint_limit_margin"
   ],
   "properties": {
-    "trial_id": {
-      "type": "string",
-      "description": "Unique identifier for this trial, matching trajectories/trajectory_trials.csv."
-    },
-    "trajectory_id": {
-      "type": "string",
-      "description": "Identifier of the trajectory this trial was run against."
-    },
-    "completion_rate": {
-      "type": "number",
-      "description": "Fraction of waypoints for which sequential IK converged, in [0, 1].",
-      "minimum": 0,
-      "maximum": 1
-    },
-    "position_rmse_mm": {
-      "type": "number",
-      "description": "Root-mean-square Cartesian position tracking error across the trial, in millimeters."
-    },
-    "position_p95_mm": {
-      "type": "number",
-      "description": "95th percentile Cartesian position tracking error across the trial, in millimeters."
-    },
-    "position_max_mm": {
-      "type": "number",
-      "description": "Maximum Cartesian position tracking error across the trial, in millimeters."
-    },
-    "orientation_p95_deg": {
-      "type": "number",
-      "description": "95th percentile SO(3) logarithm orientation tracking error across the trial, in degrees."
-    },
-    "cross_track_rmse_mm": {
-      "type": "number",
-      "description": "Optional root-mean-square cross-track (perpendicular path deviation) error, in millimeters."
-    },
-    "joint_velocity_max_rad_s": {
-      "type": "array",
-      "description": "Optional per-joint maximum velocity observed [q1..q7] in radians/second.",
-      "items": { "type": "number" },
-      "minItems": 7,
-      "maxItems": 7
-    },
-    "meets_project_acceptance_criteria": {
+    "trial_id": { "type": "string", "description": "Unique identifier for this trial, matching trajectories/trajectory_trials.csv." },
+    "trajectory_id": { "type": "string", "description": "Identifier of the trajectory this trial was run against." },
+    "trial_category": { "type": "string", "enum": ["repeatability", "robustness"] },
+    "method": { "type": "string", "enum": ["warm_start", "cold_start"] },
+    "repeat_id": { "type": "integer", "minimum": 0 },
+    "seed": { "type": "integer" },
+    "speed_scale": { "type": "number", "exclusiveMinimum": 0 },
+    "control_period_s": { "type": "number", "exclusiveMinimum": 0, "description": "Speed-scale-adjusted control period used for deadline metrics." },
+    "waypoint_count": { "type": "integer", "minimum": 0, "description": "Number of waypoints actually processed by the runner." },
+    "successful_waypoints": { "type": "integer", "minimum": 0 },
+    "failed_waypoints": { "type": "integer", "minimum": 0 },
+    "waypoint_success_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "full_trajectory_completed": {
       "type": "boolean",
-      "description": "Whether this trial meets the project-defined thresholds in configs/evaluation_config.json (not an ISO 9283 certification claim)."
-    }
+      "description": "True iff the runner processed every waypoint it was asked to and never hit a fatal (non-finite) numerical failure. Not the same as waypoint_success_rate == 1."
+    },
+    "maximum_failure_streak": { "type": "integer", "minimum": 0 },
+    "recovery_rate": { "type": "number", "description": "successful_recoveries / recovery_attempts; NaN if there were no recovery attempts." },
+    "position_rmse_m": { "type": "number", "minimum": 0 },
+    "position_mae_m": { "type": "number", "minimum": 0 },
+    "position_median_m": { "type": "number", "minimum": 0 },
+    "position_p95_m": { "type": "number", "minimum": 0 },
+    "position_max_m": { "type": "number", "minimum": 0 },
+    "orientation_rmse_deg": { "type": "number", "minimum": 0 },
+    "orientation_p95_deg": { "type": "number", "minimum": 0 },
+    "orientation_max_deg": { "type": "number", "minimum": 0 },
+    "mean_iterations": { "type": "number", "minimum": 0 },
+    "p95_iterations": { "type": "number", "minimum": 0 },
+    "mean_solve_time_ms": { "type": "number", "minimum": 0 },
+    "p95_solve_time_ms": { "type": "number", "minimum": 0 },
+    "deadline_miss_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "minimum_sigma_min": { "type": "number", "minimum": 0 },
+    "maximum_condition_number": { "type": "number", "minimum": 0 },
+    "minimum_joint_limit_margin": { "type": "number" }
   },
   "additionalProperties": false
 }
