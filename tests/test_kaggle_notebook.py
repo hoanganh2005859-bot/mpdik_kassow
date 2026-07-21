@@ -204,3 +204,62 @@ def test_dataset_manifest_matches_repo():
     nb = _load_notebook()
     full_text = _all_source_text(nb)
     assert manifest["dataset_name"] in full_text
+
+
+def test_has_dataset_zip_override_variable():
+    nb = _load_notebook()
+    code_sources = _code_cell_sources(nb)
+    config_cell = next((s for s in code_sources if "PRESET" in s and "RUN_NAME" in s), None)
+    assert config_cell is not None
+    assert "DATASET_ROOT_OVERRIDE" in config_cell
+    assert "DATASET_ZIP_OVERRIDE" in config_cell
+
+
+def test_has_zip_fallback_discovery():
+    nb = _load_notebook()
+    full_text = _all_source_text(nb)
+    assert "*.zip" in full_text or ".glob(" in full_text
+    assert "_zip_root_manifest" in full_text or "_resolve_via_zip_fallback" in full_text
+
+
+def test_has_safe_extraction_with_checks():
+    nb = _load_notebook()
+    full_text = _all_source_text(nb)
+    assert "_safe_extract_zip" in full_text
+    assert "_is_unsafe_member_name" in full_text
+    assert "_is_symlink_member" in full_text
+    # Basic zip-bomb guard: a member-count and/or uncompressed-size limit must be enforced.
+    assert "_MAX_ZIP_MEMBERS" in full_text
+    assert "_MAX_ZIP_UNCOMPRESSED_BYTES" in full_text
+
+
+def test_never_calls_extractall_unchecked():
+    nb = _load_notebook()
+    full_text = _all_source_text(nb)
+    assert "extractall" not in full_text, "notebook must extract member-by-member with safety checks, not extractall()"
+
+
+def test_extraction_path_is_under_kaggle_working():
+    nb = _load_notebook()
+    full_text = _all_source_text(nb)
+    assert "_kr810_dataset_extracted" in full_text
+    assert '"/kaggle/working/_kr810_dataset_extracted"' in full_text
+
+
+def test_expanded_dataset_discovery_is_tried_before_zip_fallback():
+    nb = _load_notebook()
+    locate_cell = next(
+        s for s in _code_cell_sources(nb)
+        if "_looks_like_project_root" in s and "_resolve_via_zip_fallback" in s
+    )
+    expanded_check_index = locate_cell.index("if len(candidates) == 0:")
+    zip_fallback_call_index = locate_cell.index("_resolve_via_zip_fallback(kaggle_input)")
+    assert expanded_check_index < zip_fallback_call_index, (
+        "ZIP fallback must only be attempted after the expanded-dataset candidate search finds none"
+    )
+
+
+def test_no_hardcoded_release_zip_filename():
+    nb = _load_notebook()
+    full_text = _all_source_text(nb)
+    assert "Kaggle_Dataset_v" not in full_text, "notebook must discover the dataset ZIP by content, not by a fixed release filename"
