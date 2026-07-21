@@ -1,0 +1,48 @@
+{
+  "generator": "generate_point_ik_dataset",
+  "generator_version": "1.0.0",
+  "generation_seed": 42,
+  "difficulty_groups": {
+    "0": "near_target",
+    "1": "medium_target",
+    "2": "far_target",
+    "3": "large_orientation_change",
+    "4": "near_joint_limit",
+    "5": "near_singularity"
+  },
+  "samples_per_group": 200,
+  "sample_counts": {
+    "near_target": 200,
+    "medium_target": 200,
+    "far_target": 200,
+    "large_orientation_change": 200,
+    "near_joint_limit": 200,
+    "near_singularity": 200
+  },
+  "priority_order_highest_first": [
+    "near_singularity",
+    "near_joint_limit",
+    "large_orientation_change",
+    "far_target",
+    "medium_target",
+    "near_target"
+  ],
+  "priority_note": "A candidate pair qualifying for more than one group is assigned to the highest-priority group in priority_order_highest_first; lower-priority groups only draw from pairs not already claimed.",
+  "generic_pool_size": 30000,
+  "generic_pool_construction": "q_initial sampled uniformly over the operational interior (margin 0.1 rad from each bound); q_target = clip(q_initial + magnitude * random_unit_direction, lower, upper) with magnitude log-uniformly sampled in [10^-2.0, 10^0.5] rad so the pool spans a wide range of joint/Cartesian separations.",
+  "criteria": {
+    "near_target": "position_distance_m <= position_distance_m_low_quantile (33rd percentile of the generic pool) and joint_distance_rad > 1e-6 (not an identical pose).",
+    "medium_target": "position_distance_m_low_quantile < position_distance_m < position_distance_m_high_quantile (33rd-66th percentile of the generic pool).",
+    "far_target": "position_distance_m >= position_distance_m_high_quantile (66th percentile of the generic pool).",
+    "large_orientation_change": "orientation_distance_rad >= its 85th percentile of the generic pool, independent of joint/position distance.",
+    "near_joint_limit": "min(minimum_initial_limit_margin, minimum_target_limit_margin) <= its 10th percentile of the generic pool (normalized margin; never negative, i.e. never an operational-limit violation).",
+    "near_singularity": "min(initial_sigma_min, target_sigma_min) <= its 10th percentile of the generic pool (actual computed Jacobian singular value, not an assumed label)."
+  },
+  "quantile_thresholds": {
+    "position_distance_m_low_quantile": 0.019371193645542198,
+    "position_distance_m_high_quantile": 0.12680077652500893,
+    "orientation_distance_rad_top_quantile": 1.1118369887267556,
+    "pair_limit_margin_bottom_quantile": 0.006685283665645052,
+    "pair_sigma_min_bottom_quantile": 0.018548143693553776
+  }
+}

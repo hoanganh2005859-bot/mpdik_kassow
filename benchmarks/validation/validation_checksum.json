@@ -1,0 +1,172 @@
+{
+  "generator": "generate_fk_validation_states",
+  "generator_version": "1.0.0",
+  "generation_seed": 42,
+  "source_config": {
+    "benchmark_config": {
+      "random_seed": 42,
+      "validation_fk_samples": 1000,
+      "validation_jacobian_samples": 200,
+      "validation_singularity_samples": 300,
+      "validation_singularity_candidate_pool_size": 20000,
+      "validation_singularity_moderate_upper_multiplier": 3.0,
+      "finite_difference_epsilon": 1e-06,
+      "point_ik_samples_per_group": 200,
+      "difficulty_groups": [
+        "near_target",
+        "medium_target",
+        "far_target",
+        "large_orientation_change",
+        "near_joint_limit",
+        "near_singularity"
+      ],
+      "generation_status": "not_generated"
+    },
+    "dls_config_singularity_threshold": 0.03
+  },
+  "group_definitions": {
+    "fk_test_states": {
+      "0": "zero_or_home",
+      "1": "random_interior",
+      "2": "near_operational_lower_limit",
+      "3": "near_operational_upper_limit",
+      "4": "mixed_near_limits"
+    },
+    "jacobian_test_states": {
+      "0": "regular",
+      "1": "near_lower_limit",
+      "2": "near_upper_limit",
+      "3": "mixed_near_limits",
+      "4": "low_sigma"
+    },
+    "singularity_test_states": {
+      "0": "regular",
+      "1": "moderately_conditioned",
+      "2": "near_singular"
+    }
+  },
+  "singularity_thresholds": {
+    "singularity_sigma_threshold": 0.03,
+    "moderately_conditioned_upper_bound": 0.09,
+    "source": "configs/dls_config.json:singularity_sigma_threshold"
+  },
+  "files": [
+    {
+      "filename": "benchmarks/validation/fk_test_states.npz",
+      "sha256": "fc97596a8abef8cefd2e0c4394f33065df90ec862748de437e31d504857cc0b7",
+      "file_size_bytes": 77024,
+      "sample_count": 1000,
+      "array_names": [
+        "group_id",
+        "q_samples",
+        "sample_id",
+        "source_seed"
+      ],
+      "array_shapes": {
+        "sample_id": [
+          1000
+        ],
+        "q_samples": [
+          1000,
+          7
+        ],
+        "group_id": [
+          1000
+        ],
+        "source_seed": [
+          1000
+        ]
+      },
+      "array_dtypes": {
+        "sample_id": "int64",
+        "q_samples": "float64",
+        "group_id": "int32",
+        "source_seed": "int64"
+      },
+      "generation_seed": 42
+    },
+    {
+      "filename": "benchmarks/validation/jacobian_test_states.npz",
+      "sha256": "d60dbf72c5dd59d32a1db53ea2ff91416fb3c8416cceac4495415c6543cca06a",
+      "file_size_bytes": 18106,
+      "sample_count": 200,
+      "array_names": [
+        "finite_difference_epsilon",
+        "group_id",
+        "q_samples",
+        "sample_id",
+        "source_seed"
+      ],
+      "array_shapes": {
+        "sample_id": [
+          200
+        ],
+        "q_samples": [
+          200,
+          7
+        ],
+        "group_id": [
+          200
+        ],
+        "finite_difference_epsilon": [
+          200
+        ],
+        "source_seed": [
+          200
+        ]
+      },
+      "array_dtypes": {
+        "sample_id": "int64",
+        "q_samples": "float64",
+        "group_id": "int32",
+        "finite_difference_epsilon": "float64",
+        "source_seed": "int64"
+      },
+      "generation_seed": 42
+    },
+    {
+      "filename": "benchmarks/validation/singularity_test_states.npz",
+      "sha256": "5dd2dacbb0f378573d4eecfd7589dc0011e355e943df9b19e17323159fd26a64",
+      "file_size_bytes": 29138,
+      "sample_count": 300,
+      "array_names": [
+        "condition_number",
+        "group_id",
+        "q_samples",
+        "sample_id",
+        "sigma_min",
+        "source_seed"
+      ],
+      "array_shapes": {
+        "sample_id": [
+          300
+        ],
+        "q_samples": [
+          300,
+          7
+        ],
+        "sigma_min": [
+          300
+        ],
+        "condition_number": [
+          300
+        ],
+        "group_id": [
+          300
+        ],
+        "source_seed": [
+          300
+        ]
+      },
+      "array_dtypes": {
+        "sample_id": "int64",
+        "q_samples": "float64",
+        "sigma_min": "float64",
+        "condition_number": "float64",
+        "group_id": "int32",
+        "source_seed": "int64"
+      },
+      "generation_seed": 42
+    }
+  ]
+}

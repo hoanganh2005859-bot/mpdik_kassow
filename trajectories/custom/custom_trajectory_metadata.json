@@ -1,0 +1,21 @@
+{
+  "template_only": true,
+  "note": "Illustrative example of the custom-trajectory schema only. Not part of any official Tier 2-4 benchmark and must not be consumed by evaluation pipelines.",
+  "generator": "generate_custom_trajectory_template",
+  "generator_version": "1.0.0",
+  "generation_seed": 42,
+  "num_waypoints": 5,
+  "anchor_q_rad": [
+    -1.5132335670061678,
+    1.7687400933803903,
+    1.2101399307963838,
+    1.591756525985534,
+    0.2090160455743968,
+    -0.0994324775625488,
+    2.3181621076981447
+  ],
+  "csv_path": "trajectories/custom/custom_trajectory_template.csv",
+  "npz_path": "trajectories/custom/custom_trajectory_template.npz",
+  "csv_sha256": "2c95bbb68c26f8effaecfcbf8ffbc95029cd3f94aab6d276cef01a46ce700da8",
+  "npz_sha256": "1bebd3c2519bad129efa96b517e0b2ceb1a42fd189b078151781b6dc10e77ac9"
+}

@@ -14,5 +14,5 @@
   "default_control_period_s": 0.025,
   "time_scaling": "quintic",
   "speed_scales": [0.5, 1.0, 1.5],
-  "generation_status": "not_generated"
+  "generation_status": "generated"
 }

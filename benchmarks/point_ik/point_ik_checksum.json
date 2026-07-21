@@ -1,0 +1,127 @@
+{
+  "generator": "generate_point_ik_dataset",
+  "generator_version": "1.0.0",
+  "generation_seed": 42,
+  "config_hash": "46484b19ed3a608628f2d72c9f7d5756039d012d10a41c880b02ace01f095ea3",
+  "sample_counts": {
+    "near_target": 200,
+    "medium_target": 200,
+    "far_target": 200,
+    "large_orientation_change": 200,
+    "near_joint_limit": 200,
+    "near_singularity": 200
+  },
+  "files": [
+    {
+      "filename": "benchmarks/point_ik/point_ik_v1.npz",
+      "sha256": "5e1756b4a9f79a84a4483cd197625bae5992177bb29984ba9df539b58e5bb579",
+      "file_size_bytes": 364264,
+      "sample_count": 1200,
+      "array_names": [
+        "difficulty_id",
+        "initial_position",
+        "initial_quaternion",
+        "initial_sigma_min",
+        "joint_distance_rad",
+        "minimum_initial_limit_margin",
+        "minimum_target_limit_margin",
+        "orientation_distance_rad",
+        "position_distance_m",
+        "q_initial",
+        "q_target",
+        "sample_id",
+        "source_seed",
+        "target_position",
+        "target_quaternion",
+        "target_sigma_min"
+      ],
+      "array_shapes": {
+        "sample_id": [
+          1200
+        ],
+        "q_initial": [
+          1200,
+          7
+        ],
+        "q_target": [
+          1200,
+          7
+        ],
+        "initial_position": [
+          1200,
+          3
+        ],
+        "initial_quaternion": [
+          1200,
+          4
+        ],
+        "target_position": [
+          1200,
+          3
+        ],
+        "target_quaternion": [
+          1200,
+          4
+        ],
+        "position_distance_m": [
+          1200
+        ],
+        "orientation_distance_rad": [
+          1200
+        ],
+        "joint_distance_rad": [
+          1200
+        ],
+        "initial_sigma_min": [
+          1200
+        ],
+        "target_sigma_min": [
+          1200
+        ],
+        "minimum_initial_limit_margin": [
+          1200
+        ],
+        "minimum_target_limit_margin": [
+          1200
+        ],
+        "difficulty_id": [
+          1200
+        ],
+        "source_seed": [
+          1200
+        ]
+      },
+      "array_dtypes": {
+        "sample_id": "int64",
+        "q_initial": "float64",
+        "q_target": "float64",
+        "initial_position": "float64",
+        "initial_quaternion": "float64",
+        "target_position": "float64",
+        "target_quaternion": "float64",
+        "position_distance_m": "float64",
+        "orientation_distance_rad": "float64",
+        "joint_distance_rad": "float64",
+        "initial_sigma_min": "float64",
+        "target_sigma_min": "float64",
+        "minimum_initial_limit_margin": "float64",
+        "minimum_target_limit_margin": "float64",
+        "difficulty_id": "int32",
+        "source_seed": "int64"
+      },
+      "generation_seed": 42,
+      "generator_version": "1.0.0",
+      "config_hash": "46484b19ed3a608628f2d72c9f7d5756039d012d10a41c880b02ace01f095ea3"
+    },
+    {
+      "filename": "benchmarks/point_ik/point_ik_manifest.csv",
+      "sha256": "5ac38b4e7d32f9d04461f7409b6784a807af779c66ab90deea74eb3e9b872432",
+      "file_size_bytes": 128444
+    },
+    {
+      "filename": "benchmarks/point_ik/difficulty_definition.json",
+      "sha256": "cb8f3cb3a2d88edd01e718c9007d12bd7632ee4e37cb2e20dd34844d3f3c477c",
+      "file_size_bytes": 2662
+    }
+  ]
+}

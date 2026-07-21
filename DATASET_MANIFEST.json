@@ -36,8 +36,39 @@
     "quaternion_order": "wxyz",
     "rotation_error_type": "so3_log"
   },
-  "benchmark_status": "not_generated",
-  "trajectories_status": "not_generated",
+  "benchmark_status": "generated_and_validated",
+  "trajectories_status": "generated_and_validated",
+  "generation_summary": {
+    "generation_seed": 42,
+    "validation_fk_samples": 1000,
+    "validation_jacobian_samples": 200,
+    "validation_singularity_samples": 300,
+    "validation_files": [
+      "benchmarks/validation/fk_test_states.npz",
+      "benchmarks/validation/jacobian_test_states.npz",
+      "benchmarks/validation/singularity_test_states.npz",
+      "benchmarks/validation/validation_checksum.json"
+    ],
+    "point_ik_sample_count": 1200,
+    "point_ik_difficulty_group_count": 6,
+    "point_ik_samples_per_group": 200,
+    "point_ik_files": [
+      "benchmarks/point_ik/point_ik_v1.npz",
+      "benchmarks/point_ik/point_ik_manifest.csv",
+      "benchmarks/point_ik/difficulty_definition.json",
+      "benchmarks/point_ik/point_ik_checksum.json"
+    ],
+    "trajectory_count": 8,
+    "trajectory_types": ["line", "circle", "figure8", "helix"],
+    "trajectory_orientation_modes": ["fixed", "variable"],
+    "trajectory_waypoints_per_file": 400,
+    "trajectory_trial_count": 360,
+    "trajectory_files": [
+      "trajectories/trajectory_manifest.csv",
+      "trajectories/trajectory_trials.csv"
+    ],
+    "note": "Stage 4 generated Tier 0 validation states, the Tier 1 point-IK benchmark, and Tier 2-4 trajectory/trial definitions from the real KR810 model with sequential-DLS reachability validation. No Tier 0-4 evaluation has been run; tiers_included above remain scope declarations only, not completion claims."
+  },
   "acceptance_criteria": {
     "note": "The following thresholds are project-defined acceptance criteria for this dataset's own evaluation pipeline. They are not ISO 9283 certification limits and no ISO 9283 certification is claimed.",
     "kinematic_position_rmse_target_mm": 4.0,
@@ -46,6 +77,8 @@
     "orientation_p95_target_deg": 10.0
   },
   "notes": [
-    "Stage 2 integrated the KR810 asset pipeline: assets/kr810.urdf, assets/meshes/a810/*.stl, and assets/kr810.xml are populated and load in MuJoCo (see assets/ASSET_CONVERSION_REPORT.md and assets/model_metadata.json). This is asset/model integration only; no Tier 0 kinematic validation, benchmark, or trajectory generation has been performed."
+    "Stage 2 integrated the KR810 asset pipeline: assets/kr810.urdf, assets/meshes/a810/*.stl, and assets/kr810.xml are populated and load in MuJoCo (see assets/ASSET_CONVERSION_REPORT.md and assets/model_metadata.json). This is asset/model integration only; no Tier 0 kinematic validation, benchmark, or trajectory generation has been performed.",
+    "Stage 3 implemented and unit-tested FK, the geometric/finite-difference Jacobian, SO(3) rotation utilities, pose error, and the DLS solver.",
+    "Stage 4 generated real, seed-deterministic Tier 0 validation states, the Tier 1 point-IK benchmark (1200 samples, 6 difficulty groups, quantile-derived thresholds), and Tier 2-4 trajectory/trial definitions (8 trajectories x 400 waypoints, 360 trial rows), all produced from the real KR810 model with SHA256 checksums and sequential-DLS reachability validation at generation time. algorithms/, evaluation/, and pipelines/ remain unimplemented; no Tier 0-4 evaluation has been run and no tier status is claimed complete."
   ]
 }
