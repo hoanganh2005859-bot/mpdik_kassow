@@ -2,17 +2,21 @@
   "smoke": {
     "point_sample_limit": 30,
     "validation_fk_samples": 20,
-    "validation_jacobian_samples": 5,
-    "selected_trajectories": ["line_fixed", "circle_fixed"],
+    "validation_jacobian_samples": 8,
+    "validation_singularity_samples": 20,
+    "selected_trajectories": ["line_fixed_orientation", "circle_fixed_orientation"],
     "trajectory_trial_limit": 4,
+    "waypoint_limit": 40,
     "tiers": ["tier0", "tier1", "tier2", "tier3", "tier4"]
   },
   "full": {
     "point_sample_limit": "all",
     "validation_fk_samples": "all",
     "validation_jacobian_samples": "all",
+    "validation_singularity_samples": "all",
     "selected_trajectories": "all",
     "trajectory_trial_limit": "all",
+    "waypoint_limit": "all",
     "tiers": ["tier0", "tier1", "tier2", "tier3", "tier4"]
   }
 }

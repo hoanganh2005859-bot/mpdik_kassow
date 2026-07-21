@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "run_manifest_schema.json",
+  "title": "Tier 0-4 Run Manifest",
+  "description": "run_manifest.json produced by pipelines.run_tier0_to_tier4 for one Tier 0-4 pipeline invocation: provenance (versions, checksums, command line), per-tier resume state, and the overall outcome.",
+  "type": "object",
+  "required": [
+    "run_id",
+    "start_time_utc",
+    "end_time_utc",
+    "duration_s",
+    "preset",
+    "seed",
+    "command_line",
+    "output_path",
+    "environment",
+    "checksums",
+    "selected_point_samples",
+    "selected_trajectories",
+    "selected_methods",
+    "tiers",
+    "overall_status",
+    "warnings",
+    "fatal_error"
+  ],
+  "properties": {
+    "run_id": { "type": "string", "description": "Unique identifier for this run, derived from its UTC start time." },
+    "start_time_utc": { "type": "string", "format": "date-time" },
+    "end_time_utc": { "type": "string", "format": "date-time" },
+    "duration_s": { "type": "number", "minimum": 0 },
+    "project_version": { "type": "string" },
+    "dataset_manifest_version": { "type": "string" },
+    "preset": { "type": "string", "enum": ["smoke", "full"] },
+    "seed": { "type": "integer" },
+    "command_line": { "type": "string", "description": "The argv this run was invoked with." },
+    "output_path": {
+      "type": "string",
+      "description": "Output directory, relative to the repository root when possible (never an absolute source-machine path beyond that)."
+    },
+    "environment": {
+      "type": "object",
+      "required": ["python_version", "platform", "numpy_version", "scipy_version", "pandas_version", "mujoco_version"],
+      "properties": {
+        "python_version": { "type": "string" },
+        "platform": { "type": "string" },
+        "numpy_version": { "type": "string" },
+        "scipy_version": { "type": ["string", "null"] },
+        "pandas_version": { "type": ["string", "null"] },
+        "mujoco_version": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "checksums": {
+      "type": "object",
+      "required": ["model_sha256", "point_benchmark_sha256", "trajectory_file_checksums"],
+      "properties": {
+        "model_sha256": { "type": "string" },
+        "point_benchmark_sha256": { "type": "string" },
+        "trajectory_file_checksums": {
+          "type": "object",
+          "description": "trajectory_id -> SHA256 of its NPZ file, for every selected trajectory.",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "selected_point_samples": {
+      "description": "Point-IK sample limit used (an integer count), or null when every benchmark sample was used.",
+      "type": ["integer", "null"]
+    },
+    "selected_trajectories": {
+      "description": "List of selected trajectory_id values, or the literal string 'all'.",
+      "oneOf": [
+        { "type": "array", "items": { "type": "string" } },
+        { "const": "all" }
+      ]
+    },
+    "selected_methods": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["warm_start", "cold_start"] }
+    },
+    "tiers": {
+      "type": "object",
+      "description": "Per-tier resume/execution state, keyed by tier0..tier4.",
+      "properties": {
+        "tier0": { "$ref": "#/$defs/tier_state" },
+        "tier1": { "$ref": "#/$defs/tier_state" },
+        "tier2": { "$ref": "#/$defs/tier_state" },
+        "tier3": { "$ref": "#/$defs/tier_state" },
+        "tier4": { "$ref": "#/$defs/tier_state" }
+      },
+      "additionalProperties": false
+    },
+    "overall_status": { "type": "string", "enum": ["completed", "failed"] },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "fatal_error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "tier_state": {
+      "type": "object",
+      "description": "Resume/execution state for a single tier: 'completed' tiers carry an input_signature used to decide whether a later --resume run can reuse them; 'not_run'/'skipped' tiers carry a reason instead.",
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["completed", "not_run", "skipped"] },
+        "input_signature": { "type": "string" },
+        "gate_pass": { "type": "boolean" },
+        "acceptance_status": { "type": "string", "enum": ["passed", "failed"] },
+        "sample_count": { "type": "integer", "minimum": 0 },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

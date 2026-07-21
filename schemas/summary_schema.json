@@ -2,51 +2,185 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "summary_schema.json",
   "title": "Tier 0-4 Run Summary",
-  "description": "Top-level summary of a Tier 0-4 pipeline run, aggregating per-tier status against project-defined acceptance criteria (not ISO 9283 certification).",
+  "description": "FINAL_SUMMARY.json produced by pipelines.run_tier0_to_tier4: aggregates Tier 0-4 results against project-defined acceptance criteria. These are project acceptance thresholds (see configs/evaluation_config.json), not an ISO 9283 certification, and Tier 0-4 covers kinematic evaluation only (no dynamics/controller).",
   "type": "object",
   "required": [
+    "run_id",
     "preset",
-    "tiers"
+    "generated_at_utc",
+    "tier0",
+    "tier1",
+    "tier2",
+    "tier3",
+    "tier4",
+    "acceptance_criteria",
+    "overall_status",
+    "warnings",
+    "fatal_error"
   ],
   "properties": {
-    "preset": {
-      "type": "string",
-      "description": "Experiment preset used for this run (e.g. 'smoke' or 'full'), per configs/experiment_presets.json."
+    "run_id": { "type": "string" },
+    "preset": { "type": "string", "enum": ["smoke", "full"] },
+    "generated_at_utc": { "type": "string", "format": "date-time" },
+    "tier0": { "$ref": "#/$defs/tier0_block" },
+    "tier1": { "$ref": "#/$defs/tier1_block" },
+    "tier2": { "$ref": "#/$defs/tier2_block" },
+    "tier3": { "$ref": "#/$defs/tier3_block" },
+    "tier4": { "$ref": "#/$defs/tier4_block" },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/acceptance_criterion" }
     },
-    "tiers": {
-      "type": "object",
-      "description": "Per-tier summary status, keyed by tier name.",
-      "required": ["tier0", "tier1", "tier2", "tier3", "tier4"],
-      "properties": {
-        "tier0": { "$ref": "#/$defs/tier_summary" },
-        "tier1": { "$ref": "#/$defs/tier_summary" },
-        "tier2": { "$ref": "#/$defs/tier_summary" },
-        "tier3": { "$ref": "#/$defs/tier_summary" },
-        "tier4": { "$ref": "#/$defs/tier_summary" }
-      },
-      "additionalProperties": false
-    }
+    "overall_status": { "type": "string", "enum": ["completed", "failed"] },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "fatal_error": { "type": ["string", "null"] },
+    "note": { "type": "string" }
   },
   "additionalProperties": false,
   "$defs": {
-    "tier_summary": {
+    "acceptance_criterion": {
       "type": "object",
-      "description": "Summary status for a single tier.",
+      "description": "One project-defined acceptance check (not an ISO 9283 certification).",
+      "required": ["name", "tier", "value", "threshold", "passed", "unit", "source"],
+      "properties": {
+        "name": { "type": "string" },
+        "tier": { "type": "string", "enum": ["tier1", "tier2", "tier3", "tier4"] },
+        "value": { "type": "number" },
+        "threshold": { "type": "number" },
+        "passed": { "type": "boolean" },
+        "unit": { "type": "string" },
+        "source": { "const": "project_criterion" }
+      },
+      "additionalProperties": false
+    },
+    "tier0_block": {
+      "type": "object",
       "required": ["status", "sample_count"],
       "properties": {
-        "status": {
-          "type": "string",
-          "enum": ["not_run", "passed", "failed"],
-          "description": "Outcome of this tier against project acceptance criteria."
+        "status": { "type": "string", "enum": ["passed", "failed", "not_run"] },
+        "gate_pass": { "type": "boolean" },
+        "max_jacobian_relative_error": { "type": "number", "minimum": 0 },
+        "minimum_sigma_min": { "type": "number", "minimum": 0 },
+        "sample_count": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "tier1_block": {
+      "type": "object",
+      "required": ["status", "sample_count"],
+      "properties": {
+        "status": { "type": "string", "enum": ["passed", "failed", "not_run"] },
+        "execution_status": { "type": "string", "enum": ["completed", "failed"] },
+        "sample_count": { "type": "integer", "minimum": 0 },
+        "success_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "success_rate_wilson_ci": {
+          "type": "object",
+          "properties": {
+            "lower": { "type": "number" },
+            "upper": { "type": "number" },
+            "confidence_level": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
+          },
+          "additionalProperties": false
         },
-        "sample_count": {
-          "type": "integer",
-          "description": "Number of samples, waypoints, or trials evaluated in this tier."
-        },
-        "notes": {
-          "type": "string",
-          "description": "Optional free-text notes about this tier's run."
+        "position_rmse_mm": { "type": "number", "minimum": 0 },
+        "position_p95_mm": { "type": "number", "minimum": 0 },
+        "position_max_mm": { "type": "number", "minimum": 0 },
+        "orientation_rmse_deg": { "type": "number", "minimum": 0 },
+        "orientation_p95_deg": { "type": "number", "minimum": 0 },
+        "orientation_max_deg": { "type": "number", "minimum": 0 },
+        "mean_iterations": { "type": "number", "minimum": 0 },
+        "p95_runtime_ms": { "type": "number", "minimum": 0 },
+        "failure_counts": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
         }
+      },
+      "additionalProperties": false
+    },
+    "tier2_method_metrics": {
+      "type": "object",
+      "required": [
+        "trial_count", "waypoint_success_rate", "full_trajectory_completion_rate",
+        "maximum_failure_streak", "recovery_rate", "mean_iterations", "p95_runtime_ms"
+      ],
+      "properties": {
+        "trial_count": { "type": "integer", "minimum": 0 },
+        "waypoint_success_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "full_trajectory_completion_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "maximum_failure_streak": { "type": "integer", "minimum": 0 },
+        "recovery_rate": { "type": "number", "description": "NaN when no recovery attempts occurred." },
+        "mean_iterations": { "type": "number", "minimum": 0 },
+        "p95_runtime_ms": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "tier2_block": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["completed", "not_run"] },
+        "warm_start": { "$ref": "#/$defs/tier2_method_metrics" },
+        "cold_start": { "$ref": "#/$defs/tier2_method_metrics" }
+      },
+      "additionalProperties": false
+    },
+    "tier3_method_metrics": {
+      "type": "object",
+      "required": [
+        "position_rmse_mm", "position_p95_mm", "position_max_mm",
+        "orientation_rmse_deg", "orientation_p95_deg",
+        "cross_track_rmse_mm", "cross_track_p95_mm", "atp_mm", "rtp_mm"
+      ],
+      "properties": {
+        "position_rmse_mm": { "type": "number", "minimum": 0 },
+        "position_p95_mm": { "type": "number", "minimum": 0 },
+        "position_max_mm": { "type": "number", "minimum": 0 },
+        "orientation_rmse_deg": { "type": "number", "minimum": 0 },
+        "orientation_p95_deg": { "type": "number", "minimum": 0 },
+        "cross_track_rmse_mm": { "type": ["number", "null"], "minimum": 0 },
+        "cross_track_p95_mm": { "type": ["number", "null"], "minimum": 0 },
+        "atp_mm": { "type": ["number", "null"], "minimum": 0 },
+        "rtp_mm": { "type": ["number", "null"], "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "tier3_block": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["completed", "not_run"] },
+        "warm_start": { "$ref": "#/$defs/tier3_method_metrics" },
+        "cold_start": { "$ref": "#/$defs/tier3_method_metrics" }
+      },
+      "additionalProperties": false
+    },
+    "tier4_method_metrics": {
+      "type": "object",
+      "required": [
+        "max_joint_jump_rad", "rms_jerk_rad_s3", "min_joint_limit_margin",
+        "velocity_violation_rate", "minimum_sigma_min", "near_singular_fraction",
+        "deadline_miss_rate", "acceleration_status"
+      ],
+      "properties": {
+        "max_joint_jump_rad": { "type": "number", "minimum": 0 },
+        "rms_jerk_rad_s3": { "type": ["number", "null"], "minimum": 0 },
+        "min_joint_limit_margin": { "type": ["number", "null"] },
+        "velocity_violation_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "minimum_sigma_min": { "type": ["number", "null"], "minimum": 0 },
+        "near_singular_fraction": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "deadline_miss_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "acceleration_status": { "type": "string", "enum": ["available", "unavailable"] }
+      },
+      "additionalProperties": false
+    },
+    "tier4_block": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["completed", "not_run"] },
+        "warm_start": { "$ref": "#/$defs/tier4_method_metrics" },
+        "cold_start": { "$ref": "#/$defs/tier4_method_metrics" }
       },
       "additionalProperties": false
     }

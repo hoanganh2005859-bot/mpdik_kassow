@@ -25,6 +25,18 @@ def environment_metadata() -> Dict[str, Any]:
         "numpy_version": np.__version__,
     }
     try:
+        import scipy
+
+        metadata["scipy_version"] = scipy.__version__
+    except ImportError:
+        metadata["scipy_version"] = None
+    try:
+        import pandas
+
+        metadata["pandas_version"] = pandas.__version__
+    except ImportError:
+        metadata["pandas_version"] = None
+    try:
         import mujoco
 
         metadata["mujoco_version"] = mujoco.__version__

@@ -72,6 +72,37 @@ def plot_iterations_histogram(iterations: np.ndarray, save_path: PathLike, title
     return _save_and_close(fig, save_path)
 
 
+def plot_runtime_histogram(solve_times_ms: np.ndarray, save_path: PathLike, title: Optional[str] = None) -> Path:
+    """Histogram of DLS per-sample solve time (milliseconds)."""
+    solve_times_ms = np.asarray(solve_times_ms, dtype=np.float64)
+
+    fig, ax = plt.subplots()
+    ax.hist(solve_times_ms, bins="auto")
+    ax.set_xlabel("Solve time (ms)")
+    ax.set_ylabel("Count")
+    ax.set_title(_title("Runtime distribution", title))
+    return _save_and_close(fig, save_path)
+
+
+def plot_success_rate_by_group_bar(
+    group_labels: Sequence[str], success_rates: Sequence[float], save_path: PathLike, title: Optional[str] = None
+) -> Path:
+    """Bar chart of success rate per named group (e.g. Tier 1 difficulty groups)."""
+    success_rates = np.asarray(success_rates, dtype=np.float64)
+    if success_rates.shape[0] != len(group_labels):
+        raise ValueError("group_labels and success_rates must have the same length")
+
+    fig, ax = plt.subplots()
+    ax.bar(np.arange(len(group_labels)), success_rates)
+    ax.set_xticks(np.arange(len(group_labels)))
+    ax.set_xticklabels(group_labels, rotation=30, ha="right")
+    ax.set_ylabel("Success rate")
+    ax.set_ylim(0.0, 1.05)
+    ax.set_title(_title("Success rate by group", title))
+    ax.grid(True, axis="y")
+    return _save_and_close(fig, save_path)
+
+
 def plot_target_vs_actual_3d(
     target_positions: np.ndarray, actual_positions: np.ndarray, save_path: PathLike, title: Optional[str] = None
 ) -> Path:
