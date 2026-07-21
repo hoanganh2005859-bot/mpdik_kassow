@@ -1,0 +1,56 @@
+<mujoco model="kr2_robot_a810">
+  <compiler angle="radian" meshdir="meshes/a810"/>
+
+  <asset>
+    <mesh name="a810_Base" content_type="model/stl" file="a810_Base.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="a810_Link2" content_type="model/stl" file="a810_Link2.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="a810_Link3" content_type="model/stl" file="a810_Link3.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="a810_Link4" content_type="model/stl" file="a810_Link4.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="a810_Link5" content_type="model/stl" file="a810_Link5.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="a810_Link6" content_type="model/stl" file="a810_Link6.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="a810_Link7" content_type="model/stl" file="a810_Link7.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="a810_ToolIO" content_type="model/stl" file="a810_ToolIO.stl" scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <worldbody>
+    <geom type="mesh" rgba="0.2 0.2 0.2 1" mesh="a810_Base"/>
+    <body name="link1" pos="0 0 0.035">
+      <inertial pos="0 0 0.13685" mass="4.58" diaginertia="0.003 0.003 0.003"/>
+      <joint name="joint_1" pos="0 0 0" axis="0 0 1" range="-6.28319 6.28319" actuatorfrcrange="-204 204" damping="0.1"/>
+      <geom pos="0 0 0.169" quat="1 0 0 0" type="mesh" rgba="0.2 0.2 0.2 1" mesh="a810_Link2"/>
+      <body name="linkJ2" pos="0.05 0 0.2737">
+        <inertial pos="-0.0032925 -0.00564334 0.0115237" quat="0.966517 0.223952 -0.122026 -0.0282748" mass="6.53" diaginertia="0.022256 0.022256 0.006"/>
+        <joint name="joint_2" pos="0 0 0" axis="0 1 0" range="-1.22173 3.14159" actuatorfrcrange="-204 204" damping="0.1"/>
+        <geom size="0.015 0.075" pos="0 -0.01 0" quat="0.707107 0.707107 0 0" type="cylinder" rgba="1 0.423529 0.0392157 1"/>
+        <geom pos="-0.001 -0.0857 0" quat="0.5 -0.5 0.5 -0.5" type="mesh" rgba="0.2 0.2 0.2 1" mesh="a810_Link3"/>
+        <body name="link3" pos="-0.05 -0.0857 0.274">
+          <inertial pos="0 0 0" mass="2.9" diaginertia="0.003 0.003 0.003"/>
+          <joint name="joint_3" pos="0 0 0" axis="0 0 1" range="-6.28319 6.28319" actuatorfrcrange="-85 85" damping="0.1"/>
+          <geom pos="-0.05 0 0.315" quat="0.5 0.5 -0.5 -0.5" type="mesh" rgba="0.2 0.2 0.2 1" mesh="a810_Link4"/>
+          <body name="linkJ4" pos="0.04 0 0.1429">
+            <inertial pos="-0.00319613 0.0126965 0.0134237" quat="0.971184 -0.213337 -0.103774 0.0227958" mass="4.13" diaginertia="0.0168816 0.0168816 0.006"/>
+            <joint name="joint_4" pos="0 0 0" axis="0 1 0" range="-1.22173 3.14159" actuatorfrcrange="-85 85" damping="0.1"/>
+            <geom size="0.015 0.0645" pos="0 0.013 0" quat="0.707107 0.707107 0 0" type="cylinder" rgba="1 0.423529 0.0392157 1"/>
+            <geom pos="0 0.08455 0" quat="0.5 -0.5 -0.5 0.5" type="mesh" rgba="0.2 0.2 0.2 1" mesh="a810_Link5"/>
+            <body name="link5" pos="-0.04 0.08405 0.271">
+              <inertial pos="0 0 0" mass="1.7" diaginertia="0.003 0.003 0.003"/>
+              <joint name="joint_5" pos="0 0 0" axis="0 0 1" range="-6.28319 6.28319" actuatorfrcrange="-51 51" damping="0.1"/>
+              <geom pos="0 0.002 0.1035" quat="0.707107 0 0 -0.707107" type="mesh" rgba="0.2 0.2 0.2 1" mesh="a810_Link6"/>
+              <body name="linkJ6" pos="0 0 0.1035">
+                <inertial pos="0 0.0575 0.002" quat="0.693773 0.720193 0 0" mass="3.6" diaginertia="0.0163185 0.0163185 0.006"/>
+                <joint name="joint_6" pos="0 0 0" axis="0 1 0" range="-6.28319 6.28319" actuatorfrcrange="-51 51" damping="0.1"/>
+                <geom pos="0 0.111 0" type="mesh" rgba="0.2 0.2 0.2 1" mesh="a810_Link7"/>
+                <body name="end_effector" pos="0 0.111 0.108">
+                  <inertial pos="0 0 -0.0197" mass="0.56" diaginertia="0.003 0.003 0.003"/>
+                  <joint name="joint_7" pos="0 0 0" axis="0 0 1" range="-6.28319 6.28319" actuatorfrcrange="-51 51" damping="0.1"/>
+                  <geom type="mesh" rgba="0.8 0.8 0.8 1" mesh="a810_ToolIO"/>
+                  <site name="ee_site" pos="0 0 0" quat="1 0 0 0" size="0.005"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

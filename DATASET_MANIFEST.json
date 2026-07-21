@@ -21,10 +21,13 @@
     "simulation_engine": "MuJoCo"
   },
   "assets": {
-    "status": "not_integrated",
-    "expected_model_path": "assets/kr810.xml",
-    "expected_urdf_path": "assets/kr810.urdf",
-    "expected_mesh_path": "assets/meshes/a810"
+    "status": "integrated",
+    "model_path": "assets/kr810.xml",
+    "urdf_path": "assets/kr810.urdf",
+    "mesh_path": "assets/meshes/a810",
+    "n_joints": 7,
+    "end_effector_site": "ee_site",
+    "conversion_method": "mujoco_builtin_urdf_importer_mj_saveLastXML"
   },
   "conventions": {
     "position_unit": "meter",
@@ -43,6 +46,6 @@
     "orientation_p95_target_deg": 10.0
   },
   "notes": [
-    "This manifest describes a Stage 1 scaffold. No checksums, generation timestamps, or test results are recorded because no data or model has been generated or validated yet."
+    "Stage 2 integrated the KR810 asset pipeline: assets/kr810.urdf, assets/meshes/a810/*.stl, and assets/kr810.xml are populated and load in MuJoCo (see assets/ASSET_CONVERSION_REPORT.md and assets/model_metadata.json). This is asset/model integration only; no Tier 0 kinematic validation, benchmark, or trajectory generation has been performed."
   ]
 }

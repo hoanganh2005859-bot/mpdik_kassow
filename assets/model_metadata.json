@@ -1,0 +1,91 @@
+{
+  "robot_name": "Kassow KR810",
+  "model_version": "stage2-1.0.0",
+  "source_urdf_filename": "kr2_robot_a810_clean.urdf",
+  "source_urdf_description": "Plain-text URDF expanded from xacro for the KR810 (a810) arm, provided as an external local asset outside this repository.",
+  "source_note": "external_local_asset",
+  "source_urdf_sha256": "f8d272ac3619cd468362e75cb18738cd7aa7c76f8bece5f14e86babac016d981",
+  "destination_urdf_sha256": "f8d272ac3619cd468362e75cb18738cd7aa7c76f8bece5f14e86babac016d981",
+  "conversion_method": "mujoco_builtin_urdf_importer_mj_saveLastXML",
+  "conversion_steps": [
+    "Loaded assets/kr810.urdf directly with mujoco.MjModel.from_xml_path (MuJoCo built-in URDF importer).",
+    "Exported the compiled model to canonical MJCF with mujoco.mj_saveLastXML.",
+    "Set compiler meshdir to meshes/a810 and shortened per-mesh file attributes to basenames (relative path only, no absolute path).",
+    "Added ee_site to the end_effector body at local origin (pos 0 0 0, quat 1 0 0 0).",
+    "No actuators, no geometry resizing, no manual repositioning were added."
+  ],
+  "mujoco_version": "3.10.0",
+  "mesh_directory": "assets/meshes/a810",
+  "meshes": [
+    {"file": "a810_Base.stl", "sha256": "aac9dc5e0a2d43668ecf5c6ef8d022ba9a8058c00c9c137e911c969d4c50e3de"},
+    {"file": "a810_Link2.stl", "sha256": "005c7b598de8a23b6d07b2eabfacbcf3ea1789a1272a734340484df54c76edbd"},
+    {"file": "a810_Link3.stl", "sha256": "e742b1d1bd1f5988ca3e69cb483ab595529d5347d1e289a29292231a4905d621"},
+    {"file": "a810_Link4.stl", "sha256": "38c756b2519967fdd6205ba2e1136cf193f175a77dc4f548dad0d60b12ae5917"},
+    {"file": "a810_Link5.stl", "sha256": "4b4fb5573580592d5d6dfaa240ddf19145f6267b6619fd6078dcb009c96578b6"},
+    {"file": "a810_Link6.stl", "sha256": "943343fb41fbda401b3806cbf24e937dd68d3b945ea937c40a846ddc1cfaa473"},
+    {"file": "a810_Link7.stl", "sha256": "1849a97d177c3bd482cc9571e3f3cf5ccb7c976451f4896f38d1fabef236a7c4"},
+    {"file": "a810_ToolIO.stl", "sha256": "89dddf42d0bf6c9dc55e0c97935ca5c9a0bfd9cf5abb91fe34cd956005216422"}
+  ],
+  "movable_joint_order": ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"],
+  "joint_types": {
+    "joint_1": "revolute",
+    "joint_2": "revolute",
+    "joint_3": "revolute",
+    "joint_4": "revolute",
+    "joint_5": "revolute",
+    "joint_6": "revolute",
+    "joint_7": "revolute"
+  },
+  "urdf_limits_rad": {
+    "joint_1": {"lower": -6.283185307179586, "upper": 6.283185307179586},
+    "joint_2": {"lower": -1.2217304763960306, "upper": 3.141592653589793},
+    "joint_3": {"lower": -6.283185307179586, "upper": 6.283185307179586},
+    "joint_4": {"lower": -1.2217304763960306, "upper": 3.141592653589793},
+    "joint_5": {"lower": -6.283185307179586, "upper": 6.283185307179586},
+    "joint_6": {"lower": -6.283185307179586, "upper": 6.283185307179586},
+    "joint_7": {"lower": -6.283185307179586, "upper": 6.283185307179586}
+  },
+  "operational_limits_rad": {
+    "note": "Operational sampling limits for use in target sampling and DLS, not proven mechanical hard stops. For joint_1, joint_3, joint_5, joint_6, joint_7 the URDF encodes a full +/-2pi revolute range (a continuous-joint convention expressed as revolute); these are carried through unchanged as operational bounds per project plan. joint_2 and joint_4 use the URDF's asymmetric revolute limits directly, which are the only limits available for those joints.",
+    "joint_1": {"operational_lower_rad": -6.283185307179586, "operational_upper_rad": 6.283185307179586},
+    "joint_2": {"operational_lower_rad": -1.2217304763960306, "operational_upper_rad": 3.141592653589793},
+    "joint_3": {"operational_lower_rad": -6.283185307179586, "operational_upper_rad": 6.283185307179586},
+    "joint_4": {"operational_lower_rad": -1.2217304763960306, "operational_upper_rad": 3.141592653589793},
+    "joint_5": {"operational_lower_rad": -6.283185307179586, "operational_upper_rad": 6.283185307179586},
+    "joint_6": {"operational_lower_rad": -6.283185307179586, "operational_upper_rad": 6.283185307179586},
+    "joint_7": {"operational_lower_rad": -6.283185307179586, "operational_upper_rad": 6.283185307179586}
+  },
+  "velocity_limits_rad_s": {
+    "joint_1": 3.9269908169872414,
+    "joint_2": 3.9269908169872414,
+    "joint_3": 3.9269908169872414,
+    "joint_4": 3.9269908169872414,
+    "joint_5": 3.9269908169872414,
+    "joint_6": 3.9269908169872414,
+    "joint_7": 3.9269908169872414
+  },
+  "effort_limits": {
+    "joint_1": 204,
+    "joint_2": 204,
+    "joint_3": 85,
+    "joint_4": 85,
+    "joint_5": 51,
+    "joint_6": 51,
+    "joint_7": 51
+  },
+  "fixed_joint_names": ["dummy", "jointPL2", "jointPL4", "jointPL6"],
+  "end_effector_link": "end_effector",
+  "end_effector_site": "ee_site",
+  "end_effector_definition": "KR810 end-effector link reference frame. This is NOT an officially calibrated TCP, tool tip, or flange calibration frame.",
+  "position_unit": "meter",
+  "joint_angle_unit": "radian",
+  "quaternion_order": "wxyz",
+  "known_limitations": [
+    "ee_site is a reference frame at the end_effector link origin only; no official TCP/tool-tip/flange calibration exists for this robot.",
+    "MuJoCo's built-in URDF-to-MJCF compilation fuses fixed (jointless) child bodies into their nearest jointed parent body. As a result the URDF fixed links base, link2, link4, link6 and the fixed joints dummy, jointPL2, jointPL4, jointPL6 do not appear as separate named bodies/joints in kr810.xml; their geometry and inertial properties are algebraically composed (rigid transform + mass/inertia combination) into the parent body. This does not change the 7-DOF kinematic chain, nq, nv, or joint order.",
+    "MJCF has no native per-joint velocity-limit attribute, so joint velocity limits are not embedded inside kr810.xml itself; they are recorded here and in configs/robot_config.json from the source URDF <limit velocity=...> values.",
+    "For joint_1, joint_3, joint_5, joint_6, joint_7 the URDF's +/-2pi revolute range is a continuous-joint convention, not a verified mechanical hard stop; it is used only as an operational sampling limit.",
+    "All URDF inertial blocks use an identical placeholder diagonal inertia tensor (0.003, 0.003, 0.003); these are not CAD-derived dynamics and are carried through unchanged since Stage 2 covers kinematic asset integration only, not dynamics validation.",
+    "No MuJoCo actuators are defined (nu=0); Tier 0-4 does not require actuation."
+  ]
+}

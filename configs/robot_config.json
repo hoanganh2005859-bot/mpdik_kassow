@@ -10,17 +10,61 @@
     "joint_6",
     "joint_7"
   ],
+  "joint_order": [
+    "joint_1",
+    "joint_2",
+    "joint_3",
+    "joint_4",
+    "joint_5",
+    "joint_6",
+    "joint_7"
+  ],
+  "joint_types": {
+    "joint_1": "revolute",
+    "joint_2": "revolute",
+    "joint_3": "revolute",
+    "joint_4": "revolute",
+    "joint_5": "revolute",
+    "joint_6": "revolute",
+    "joint_7": "revolute"
+  },
   "asset_model_path": "assets/kr810.xml",
   "source_urdf_path": "assets/kr810.urdf",
   "quaternion_order": "wxyz",
   "position_unit": "meter",
   "joint_angle_unit": "radian",
   "orientation_report_unit": "degree",
-  "asset_status": "unresolved",
-  "end_effector_site": "unresolved",
+  "asset_status": "integrated",
+  "end_effector_site": "ee_site",
   "end_effector_link": "end_effector",
-  "nq": "unresolved",
-  "nv": "unresolved",
-  "operational_joint_limits": "unresolved",
-  "velocity_limits": "unresolved"
+  "nq": 7,
+  "nv": 7,
+  "operational_lower_rad": [
+    -6.283185307179586,
+    -1.2217304763960306,
+    -6.283185307179586,
+    -1.2217304763960306,
+    -6.283185307179586,
+    -6.283185307179586,
+    -6.283185307179586
+  ],
+  "operational_upper_rad": [
+    6.283185307179586,
+    3.141592653589793,
+    6.283185307179586,
+    3.141592653589793,
+    6.283185307179586,
+    6.283185307179586,
+    6.283185307179586
+  ],
+  "velocity_limits_rad_s": [
+    3.9269908169872414,
+    3.9269908169872414,
+    3.9269908169872414,
+    3.9269908169872414,
+    3.9269908169872414,
+    3.9269908169872414,
+    3.9269908169872414
+  ],
+  "effort_limits": [204, 204, 85, 85, 51, 51, 51]
 }
