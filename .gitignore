@@ -12,3 +12,4 @@ temporary_results/
 *.zip
 .venv/
 .pytest_cache/
+.vscode/
