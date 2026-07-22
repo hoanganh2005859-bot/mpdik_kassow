@@ -74,3 +74,34 @@ def build_dataset_manifest() -> dict:
             "See docs/V2_IMPLEMENTATION_LOG.md and specs/DLS_DATASET_V2_SPEC.md for status and design.",
         ],
     }
+
+
+def apply_tier0_generation_status(
+    manifest: dict,
+    fk_count: int,
+    jacobian_count: int,
+    singularity_count: int,
+    fk_group_counts: dict,
+    jacobian_group_counts: dict,
+    singularity_group_counts: dict,
+    full_locked_counts: bool,
+) -> dict:
+    """Return a copy of ``manifest`` with ``counts.tier0`` updated to the *actual* generated
+    counts (Phase 2). Never mutates dataset-wide ``generated``/``frozen``/``status`` -- Tier 0
+    being generated does not mean Tier 1-4 are, so those flags stay whatever the caller already
+    has recorded (see spec section M: the whole-dataset flags only flip once every tier is done).
+    """
+    updated = dict(manifest)
+    counts = dict(updated.get("counts", {}))
+    counts["tier0"] = {
+        "fk_states": int(fk_count),
+        "jacobian_states": int(jacobian_count),
+        "singularity_states": int(singularity_count),
+        "generated": True,
+        "full_locked_counts": bool(full_locked_counts),
+        "fk_group_counts": dict(fk_group_counts),
+        "jacobian_group_counts": dict(jacobian_group_counts),
+        "singularity_group_counts": dict(singularity_group_counts),
+    }
+    updated["counts"] = counts
+    return updated

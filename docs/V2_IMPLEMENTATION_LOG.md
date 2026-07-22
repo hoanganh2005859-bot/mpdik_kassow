@@ -165,3 +165,153 @@ singularity states at 1000/1000/600) writing into `<dataset_v2_root>/tier0_valid
 `configs/seed_policy.json`. The anchor `near_limit`/`near_singular` threshold blocker should be
 resolved (a decision from the user, not an implementation guess) before or alongside the anchor
 generator that Point-IK/core-trajectory generation will depend on.
+
+## Phase 2 — Tier 0 generator, validator, CLI (FK / Jacobian / singularity)
+
+- **Status**: complete. Tier 0 only -- no Point-IK, anchors, trajectories, or trials.
+- **Baseline before this phase**: branch `feature/dataset-v2`, commit
+  `67f753195deb40b300e9815f8b93389544d173ab`, clean working tree, `pytest -q` -> 358 passed,
+  0 failed/skipped/errored.
+
+### Files added/modified
+
+- **New**: `dataset_v2/tier0_generation.py` -- the generator. Builds FK (5 groups x 200),
+  Jacobian (5 groups x 200, including a real-`sigma_min`-ranked `low_sigma` group), and
+  singularity (3 groups x 200, classified by real computed `sigma_min` against v1's shared
+  `configs/dls_config.json:singularity_sigma_threshold`) states. Calls
+  `kinematics/forward_kinematics.py`, `kinematics/jacobian.py`,
+  `kinematics/singularity_metrics.py`, `kinematics/joint_limit_utils.py`, and
+  `kinematics/manipulability.py` unchanged -- no FK/Jacobian/SO(3)/singularity/DLS math was
+  touched or reimplemented anywhere in this phase. Seeds are derived exclusively via
+  `generators/_common.py::derive_seed` from `configs/seed_policy.json`'s `master_seed` and the
+  `tier0` component tag (10) -> per-state-type tags (fk=1, jacobian=2, singularity=3) -> per-group
+  tags; no `numpy.random` global state is touched anywhere. Exact-duplicate joint states are
+  redrawn in place (never silently kept, never padded); an insufficient singularity candidate
+  pool raises a hard error reporting the pool's regular/moderate/near-singular distribution
+  rather than relaxing thresholds or duplicating states. Writes atomically (NPZ via
+  `utils/npz_utils.py::save_npz`, JSON via temp-file-then-`replace`), rejects pre-existing output
+  without `overwrite=True`, and after a real (non-dry-run) generation updates
+  `DATASET_MANIFEST.json`'s `counts.tier0` with the actual generated counts/group counts (via the
+  new `dataset_v2/manifest.py::apply_tier0_generation_status`) and rebuilds
+  `checksums/CHECKSUM_MANIFEST.json` to include the new files.
+- **New**: `dataset_v2/tier0_validation.py` -- the independent validator. Reuses
+  `evaluation/kinematics_validation.py` (`validate_fk_states`/`validate_jacobian_states`, the
+  same functions the existing v1 Tier 0 gate uses) for the actual FK/Jacobian numerical checks,
+  adding only v2-specific structural checks: exact total/group counts, duplicate detection,
+  operational-limit compliance, and singularity-classification-vs-threshold consistency (using
+  the threshold/`moderately_conditioned_upper_bound` recorded in
+  `singularity_test_states_v2_metadata.json` at generation time, not re-derived). Returns a
+  `Tier0ValidationReport` with a `passed` flag and itemized `reasons`; never raises on a failed
+  check, only on a missing/malformed input file.
+- **New**: `pipelines/run_dataset_v2_tier0_generation.py` -- CLI
+  (`python -m pipelines.run_dataset_v2_tier0_generation --dataset-root PATH`). Supports
+  `--master-seed`, `--overwrite`, `--validate-only`, `--dry-run`, and count/candidate-pool-size
+  overrides documented as test/smoke-only (the locked full mode is 1000/1000/600). Exit codes:
+  `0` success, `1` validation failure, `2` usage/configuration error (missing scaffold, output
+  already exists without `--overwrite`, etc.).
+- **Modified** (extended, not rewritten):
+  - `dataset_v2/config_templates.py::tier0_config()` -- added the sampling-policy parameters
+    (margins, home perturbation, FD epsilon, candidate-pool sizes/multipliers) the generator
+    reads, plus an explicit `singularity_threshold_source` string; counts (1000/1000/600) and all
+    Phase 1 config files/tests are unaffected.
+  - `dataset_v2/manifest.py` -- added `apply_tier0_generation_status` (returns a copy of the
+    manifest dict with `counts.tier0` replaced by actual generated counts; never touches the
+    dataset-wide `generated`/`frozen`/`status` flags, since Tier 0 alone being generated does not
+    mean Tier 1-4 are).
+  - `dataset_v2/checksums.py` -- added `build_generated_data_fingerprint` (fingerprints any files
+    under the generation-output directories, empty at scaffold time) and wired it into
+    `build_checksum_manifest`'s `generated_data_checksum` category (previously always `[]`);
+    `source_config_fingerprint` behavior is unchanged, verified by the untouched Phase 1 scaffold
+    tests.
+- **New tests**: `tests/test_dataset_v2_tier0_generation.py` (24 tests: determinism/reseed,
+  exact small-fixture group counts, `allow_pickle=False` loads, operational-limit compliance, no
+  duplicates, `low_sigma` group driven by real computed `sigma_min`, singularity classification
+  vs. threshold, condition-number-never-NaN, overwrite protection, dry-run writes nothing,
+  CWD-independence, manifest/checksum-manifest updates, metadata required fields, no absolute
+  paths, `tier0_state_schema.json` accepts a representative record, missing-scaffold rejection,
+  the locked-1000/1000/600 config-resolution integration check, and CLI dry-run/generate/
+  validate/overwrite-rejection flows) and `tests/test_dataset_v2_tier0_validation.py` (9 tests:
+  passes on a clean fixture, and separately detects a wrong total count, wrong group count,
+  duplicate state, out-of-limit state, oversized-FD-epsilon Jacobian relative-error violation,
+  and a hand-corrupted singularity misclassification, plus CLI exit-code 0/1 on success/failure).
+  All fixtures use small counts (FK=10, Jacobian=10, singularity=9) for speed; one CLI-level test
+  runs the full locked 1000/1000/600 generation manually (see below), not as part of the regular
+  suite.
+
+### Seed policy actually used
+
+`master_seed` (from `configs/seed_policy.json`, override via `--master-seed`) ->
+`derive_seed(master_seed, component_tags["tier0"]=10)` = tier0 component seed ->
+`derive_seed(tier0_component_seed, {fk:1, jacobian:2, singularity:3})` = per-state-type seed ->
+`derive_seed(state_type_seed, group_id)` = per-group seed (the RNG actually used to draw that
+group's candidates). Every seed used is recorded verbatim in
+`tier0_validation/tier0_generation_report.json` and each per-file metadata JSON, so any seed is
+traceable back to `(master_seed, tag_path)` per spec section E. Verified byte-identical NPZ output
+across two independent scaffold+generate runs at the same seed
+(`test_deterministic_generation_same_seed`), and differing output at a different seed
+(`test_different_seed_produces_different_content`).
+
+### Counts
+
+Resolved from `configs/tier0_config.json` (written by the Phase 1 scaffold, extended this phase
+with the sampling-policy fields): 1000 FK (5 groups x 200), 1000 Jacobian (5 groups x 200), 600
+singularity (3 groups x 200) -- confirmed locked via
+`test_resolved_full_counts_in_config_are_locked_1000_1000_600`.
+
+### Full generation (manual, temporary directory, not committed)
+
+Ran the CLI against a scaffold in the OS temp directory (outside the repo, deleted afterward),
+`--master-seed 42`, no overrides (full locked mode):
+
+- `python -m pipelines.run_dataset_v2_tier0_generation --dataset-root <temp> --master-seed 42` ->
+  wrote 1000 FK / 1000 Jacobian / 600 singularity states in ~7 seconds; group counts exactly
+  200/group for all three files (confirmed from `tier0_generation_report.json`).
+- `python -m pipelines.run_dataset_v2_tier0_generation --dataset-root <temp> --validate-only` ->
+  `fk=1000 jacobian=1000 singularity=600 max_jacobian_relative_error=2.859e-10 passed=True`.
+- `singularity_threshold=0.03` (source: repo root `configs/dls_config.json`, v1's shared,
+  unmodified DLS config), `moderately_conditioned_upper_bound=0.09`.
+- `DATASET_MANIFEST.json`'s `counts.tier0` updated with `generated: true`,
+  `full_locked_counts: true`, and the exact group counts above; dataset-wide `generated`/`frozen`
+  flags remain `false` (Tier 1-4 are not generated).
+- No NPZ/CSV/generated JSON from this run was added to the repository or Git; the temp directory
+  was deleted after inspection.
+
+### Tests
+
+- Targeted: `pytest tests/test_dataset_v2_tier0_generation.py tests/test_dataset_v2_tier0_validation.py -q`
+  -> 33 passed.
+- Existing Tier 0/Dataset v2 regression:
+  `pytest tests/test_dataset_v2_scaffold.py tests/test_dataset_root_resolution.py tests/test_pipeline_tier0.py -q`
+  -> 39 passed.
+- Dataset v1 backward compatibility:
+  `pytest tests/test_pipeline_smoke.py tests/test_point_dataset.py tests/test_trajectory_files.py -q`
+  -> 130 passed.
+- Full suite: `pytest -q` -> **391 passed, 0 failed, 0 skipped, 0 errors** (358 baseline + 33 new).
+
+### Blockers
+
+- None new. The anchor `near_limit`/`near_singular` threshold blocker (spec section G) carries
+  over unresolved and untouched -- out of scope for this Tier-0-only phase.
+
+### Confirmations
+
+- Dataset v1: **not modified**. `git status --short`/`git diff --name-only` after this phase show
+  only `dataset_v2/checksums.py`, `dataset_v2/config_templates.py`, `dataset_v2/manifest.py`
+  modified (all Phase 1 files, extended additively) and `dataset_v2/tier0_generation.py`,
+  `dataset_v2/tier0_validation.py`, `pipelines/run_dataset_v2_tier0_generation.py`,
+  `tests/test_dataset_v2_tier0_generation.py`, `tests/test_dataset_v2_tier0_validation.py` as new,
+  untracked files. No file under `assets/`, `benchmarks/`, `trajectories/`, `configs/`,
+  `schemas/`, `kinematics/`, `algorithms/`, root `DATASET_MANIFEST.json`, or root `VERSION` was
+  touched.
+- Full Dataset v2 Tier 0 (2,600 states): generated and validated in a temporary directory (see
+  above) to confirm the locked counts/runtime are real, but **not** committed to the repository --
+  no NPZ/CSV/generated JSON under this phase's file list above is committed data.
+
+### Recommended Phase 3
+
+Per `docs/V2_REPO_AUDIT.md`'s recommended order, next is the Point-IK Tier 1 generator (6,000
+samples, 6 difficulty groups x 1,000, `development`/`validation`/`frozen_test` split
+1,200/1,200/3,600, anti-leakage checks per spec section K) -- or, if tackled first, the anchor
+generator's `near_limit`/`near_singular` threshold blocker (spec section G) that Point-IK's
+`near_joint_limit`/`near_singularity` groups and the later core-trajectory anchors both depend on.
+Both remain explicitly out of scope for Phase 2.

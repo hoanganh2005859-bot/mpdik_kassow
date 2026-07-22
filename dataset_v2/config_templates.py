@@ -107,7 +107,37 @@ def tier0_config() -> dict:
         "fk_state_count": 1000,
         "jacobian_state_count": 1000,
         "singularity_state_count": 600,
-        "status": "counts_locked_generation_not_implemented",
+        "fk_groups": [
+            "zero_or_home",
+            "random_interior",
+            "near_operational_lower_limit",
+            "near_operational_upper_limit",
+            "mixed_near_limits",
+        ],
+        "jacobian_groups": [
+            "regular",
+            "near_lower_limit",
+            "near_upper_limit",
+            "mixed_near_limits",
+            "low_sigma",
+        ],
+        "singularity_groups": ["regular", "moderately_conditioned", "near_singular"],
+        "sampling_policy": {
+            "interior_margin_rad": 0.15,
+            "near_limit_margin_rad": 0.05,
+            "near_limit_band_rad": 0.05,
+            "home_perturbation_rad": 0.10,
+            "finite_difference_epsilon": 1e-6,
+            "jacobian_low_sigma_candidate_pool_multiplier": 20,
+            "jacobian_low_sigma_candidate_pool_min": 2000,
+            "singularity_candidate_pool_size": 20000,
+            "singularity_moderate_upper_multiplier": 3.0,
+        },
+        "singularity_threshold_source": (
+            "repo root configs/dls_config.json:singularity_sigma_threshold (v1's shared DLS "
+            "config, reused unchanged and not duplicated into Dataset v2)"
+        ),
+        "status": "counts_locked_generation_implemented",
     }
 
 

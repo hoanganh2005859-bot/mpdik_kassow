@@ -16,6 +16,19 @@ from utils.file_checksum import sha256_file
 
 _CHECKSUMMABLE_CATEGORIES = ("source_config_fingerprint", "generated_data_checksum", "release_archive_checksum")
 
+# Directories that may hold *generated* Dataset v2 content (as opposed to the source/config
+# scaffold). Fingerprinted into the "generated_data_checksum" category once populated; at
+# scaffold time these hold only a ".gitkeep" placeholder and contribute no entries.
+_GENERATED_DATA_DIR_FIELDS = (
+    "tier0_validation_dir",
+    "tier1_point_ik_dir",
+    "anchors_dir",
+    "trajectories_development_dir",
+    "trajectories_validation_dir",
+    "trajectories_frozen_test_dir",
+    "trials_dir",
+)
+
 
 @dataclass(frozen=True)
 class ChecksumMismatch:
@@ -57,19 +70,41 @@ def build_source_config_fingerprint(dataset_root: Union[str, Path]) -> List[dict
     return entries
 
 
-def build_checksum_manifest(dataset_root: Union[str, Path]) -> dict:
-    """Development-stage checksum manifest: only the source/config fingerprint category is
-    populated (Phase 1 generates no data, so generated_data_checksum/release_archive_checksum stay
-    empty, not fabricated).
+def build_generated_data_fingerprint(dataset_root: Union[str, Path]) -> List[dict]:
+    """SHA256 entries for every generated-data file that actually exists on disk under any of
+    Dataset v2's generation output directories (Tier 0 validation states, Point-IK, anchors,
+    trajectories, trials). Empty for a scaffold-only root (those directories hold only
+    ``.gitkeep``); never a fabricated entry for a file that doesn't exist.
     """
+    paths = dataset_v2_paths(dataset_root)
+    entries = []
+    for field_name in _GENERATED_DATA_DIR_FIELDS:
+        directory = getattr(paths, field_name)
+        if not directory.is_dir():
+            continue
+        for candidate in sorted(directory.rglob("*")):
+            if candidate.is_file() and candidate.name != ".gitkeep":
+                entries.append(build_file_entry(candidate, paths.root))
+    entries.sort(key=lambda e: e["filename"])
+    return entries
+
+
+def build_checksum_manifest(dataset_root: Union[str, Path]) -> dict:
+    """Checksum manifest over the current on-disk state of ``dataset_root``: the source/config
+    fingerprint category always reflects the scaffold, and the generated-data category reflects
+    whatever Tier 0-4 generation has actually produced so far (empty at scaffold time, not
+    fabricated).
+    """
+    generated_entries = build_generated_data_fingerprint(dataset_root)
+    status = "scaffold_only_no_generated_data" if not generated_entries else "partial_generation_in_progress"
     return {
         "dataset_root_relative": True,
         "categories": {
             "source_config_fingerprint": build_source_config_fingerprint(dataset_root),
-            "generated_data_checksum": [],
+            "generated_data_checksum": generated_entries,
             "release_archive_checksum": [],
         },
-        "status": "scaffold_only_no_generated_data",
+        "status": status,
     }
 
 
