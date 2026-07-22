@@ -429,3 +429,183 @@ Point-IK Tier 1 generator (6,000 samples, 6 groups x 1,000, `development`/`valid
 its own generation-time pool (analogous to v1's `_derive_thresholds`). Alternatively, the anchor
 generator's **selection procedure** (searching for diverse anchors satisfying this phase's locked
 thresholds) can be implemented next, unblocked by this phase.
+
+## Phase 3 -- Tier 1 Point-IK generator, validator, CLI
+
+- **Status**: complete. Point-IK only -- no anchors, trajectories, trials, or DLS evaluation.
+- **Baseline before this phase**: branch `feature/dataset-v2`, commit
+  `e53617755149ec43f43079f6641e86438c8ed5e8`, clean working tree, `pytest -q` -> 406 passed,
+  0 failed/skipped/errored.
+
+### Files added/modified
+
+- **New**: `dataset_v2/point_ik_generation.py` -- the generator. Draws a deterministic
+  `(q_initial, q_target_reference)` candidate pool (`q_initial` uniform over the operational
+  interior with a margin proportional to each joint's own half-range -- a deliberate change from
+  v1's flat-0.10-rad margin, justified by the joint_2/joint_4 bias documented in
+  `docs/V2_THRESHOLD_CALIBRATION.md`; `q_target_reference` = `q_initial` perturbed by a
+  log-uniform-magnitude random unit direction, clipped to limits -- reused unchanged from v1),
+  computes real FK/Jacobian covariates for both endpoints (position, SO(3) geodesic orientation
+  distance, joint distance, `sigma_min`/`sigma_max`/`condition_number` at both endpoints, normalized
+  and absolute-rad joint-limit margins), classifies each pair into exactly one of the six locked
+  difficulty groups (`near_joint_limit`/`near_singularity` reuse Phase 2.5's locked
+  single-configuration thresholds applied to the pair-minimum; `near_target`/`medium_target`/
+  `far_target`/`large_orientation_change` use v1's unchanged 33rd/66th-percentile-position and
+  85th-percentile-orientation quantile levels, re-derived fresh from this phase's own pool), then
+  selects each group's exact 1,000-sample quota via a new deterministic
+  `stratified_diversity_select` (quantile-binned strata over six covariates -- joint-space
+  location, target-workspace location, orientation distance, position distance, pair `sigma_min`,
+  pair joint-limit margin -- seeded shuffle, round-robin draw across strata; never a plain
+  first-N cut, never solver-derived, raises an actionable pool-size error rather than relaxing a
+  threshold or duplicating a sample) before splitting each group's 1,000 into 200/200/600 via a
+  further seeded permutation. `q_target_reference` is never passed to any solver in this phase and
+  is documented (config + generated `difficulty_definition.json`) as reference/provenance-only. All
+  seeds trace to `(master_seed, tag_path)` via `generators/_common.py::derive_seed`; no
+  `numpy.random` global state is touched. Writes `development.npz`/`validation.npz`/
+  `frozen_test.npz`, `point_ik_manifest.csv`, `difficulty_definition.json`,
+  `point_ik_generation_report.json` atomically under `<dataset_v2_root>/tier1_point_ik/`, asserts
+  zero sample_id/content_hash/`(q_initial, q_target_reference)` collisions across all three splits
+  before writing, rejects pre-existing output without `overwrite=True`, and updates
+  `DATASET_MANIFEST.json`'s `counts.point_ik` (via new `dataset_v2/manifest.py::
+  apply_point_ik_generation_status`) and `checksums/CHECKSUM_MANIFEST.json` after a real
+  (non-dry-run) generation.
+- **New**: `dataset_v2/point_ik_validation.py` -- the independent validator. Recomputes FK of both
+  `q_initial` and `q_target_reference` (via `kinematics/forward_kinematics.py`, unchanged) and
+  compares to the stored pose; recomputes every covariate and the difficulty classification
+  (same priority/threshold logic as the generator, read back from the generated
+  `difficulty_definition.json`, never re-invented) and flags any mismatch; checks exact/group/
+  split counts, shapes/dtypes, no object dtype, operational-limit compliance, quaternion
+  normalization, and global uniqueness of sample_id/content_hash/`(q_initial, q_target_reference)`
+  pairs. Never calls DLS. Returns a `PointIKValidationReport` with a `passed` flag and itemized
+  `reasons`; never raises on a failed check, only on a missing/malformed input file.
+- **New**: `pipelines/run_dataset_v2_tier1_generation.py` -- CLI
+  (`python -m pipelines.run_dataset_v2_tier1_generation --dataset-root PATH`). Supports
+  `--master-seed`, `--overwrite`, `--validate-only`, `--dry-run`, `--sample-limit-per-group`
+  (test/smoke only, must be divisible by 5 to keep the 1:1:3 development:validation:frozen_test
+  ratio), and `--pool-size` (test/smoke only). Exit codes: `0` success, `1` validation failure,
+  `2` usage/configuration error.
+- **Modified** (extended, not rewritten):
+  - `dataset_v2/config_templates.py::point_ik_config()` -- added `split_sizes_per_group`
+    (200/200/600), `pair_pool_policy` (pool size formula/default 150,000, range-proportional
+    interior margin, magnitude log-range, quantile levels), and `diversity_selection_policy`
+    (covariates, bin count, procedure description); locked counts (1000/group, 1200/1200/3600)
+    and all Phase 1/2.5 config files/tests are unaffected. Status updated from
+    `counts_locked_generation_not_implemented` to `counts_locked_generation_implemented`.
+  - `dataset_v2/schemas.py::point_ik_schema()` -- extended to the full Phase 3 field list
+    (`q_target_reference` replacing `q_target` to make the reference-only usage explicit in the
+    field name itself; added `initial_position`/`initial_quaternion`, `initial_sigma_max`/
+    `target_sigma_max`, `initial_condition_number`/`target_condition_number`, and renamed the
+    margin fields to `minimum_*_limit_margin_normalized` with optional diagnostic
+    `minimum_*_limit_margin_rad` fields) -- `tests/test_dataset_v2_scaffold.py`'s two
+    `point_ik_schema` tests were updated to match (same pattern as Phase 2.5's `anchor_config`
+    test update), not to hide any implementation defect.
+  - `dataset_v2/manifest.py` -- added `apply_point_ik_generation_status` (returns a copy of the
+    manifest dict with `counts.point_ik` replaced by actual generated counts; never touches the
+    dataset-wide `generated`/`frozen`/`status` flags, mirroring `apply_tier0_generation_status`).
+- **New tests**: `tests/test_dataset_v2_point_ik_generation.py` (29 tests: exact small-fixture
+  group/split counts, `allow_pickle=False` loads, operational-limit compliance, quaternion
+  normalization, `target_position`/`target_quaternion` matching FK(`q_target_reference`),
+  `q_target_reference` never equal to `q_initial` plus the documented usage policy, no duplicate
+  pairs within/across splits, no sample_id/content_hash leakage across splits, content-hash and
+  full-array determinism at a fixed seed, differing content at a different seed, difficulty
+  boundary/priority correctness, large-orientation classification range-checked to `[0, pi]`
+  (SO(3), never Euler), diversity selection is not a plain first-N cut and raises an actionable
+  error when the pool is insufficient, overwrite protection, dry-run writes nothing,
+  CWD-independence, manifest/checksum-manifest updates, no absolute paths, schema validation of a
+  representative record, missing-scaffold rejection, the locked-6000/1000-per-group/
+  200-200-600-per-split config-resolution integration check, and CLI dry-run/generate/validate/
+  overwrite-rejection flows) and `tests/test_dataset_v2_point_ik_validation.py` (11 tests: passes
+  on a clean fixture, and separately detects a wrong total count, a wrong group count under
+  full-counts mode, a duplicate sample_id, a duplicate content_hash, an out-of-limit joint state,
+  an FK/target-pose mismatch, and a hand-corrupted difficulty classification, plus CLI exit-code
+  0/1 on success/failure). All fixtures use a small pool (1,500 candidates, 20 samples/group,
+  split 4/4/12) for speed; the full locked 6,000-sample generation was run manually (see below),
+  not as part of the regular suite.
+
+### Seed policy actually used
+
+`master_seed` -> `derive_seed(master_seed, component_tags["point_ik"]=20)` = point_ik component
+seed -> `derive_seed(point_ik_component_seed, 1)` = generic-pool seed (the RNG that draws the
+candidate pool) -> per difficulty group, `derive_seed(point_ik_component_seed, 2, group_id)` =
+diversity-selection seed and `derive_seed(point_ik_component_seed, 3, group_id)` = split-assignment
+seed. Every seed used is recorded verbatim in `tier1_point_ik/point_ik_generation_report.json`, so
+any seed is traceable back to `(master_seed, tag_path)` per spec section E. Verified byte-identical
+NPZ/content-hash output across two independent scaffold+generate runs at the same seed, and
+differing output at a different seed.
+
+### Thresholds, pool, and counts (full locked run)
+
+Reproducibility command used for the full run below:
+`python -m pipelines.run_dataset_v2_tier1_generation --dataset-root <temp> --master-seed 42`
+
+- `near_joint_limit_threshold = 0.024991237796029034` (Phase 2.5 locked, applied to
+  `min(minimum_initial_limit_margin_normalized, minimum_target_limit_margin_normalized)`).
+- `near_singularity_threshold = 0.03` (Phase 2.5 locked, applied to
+  `min(initial_sigma_min, target_sigma_min)`).
+- `generic_pool_size = 150000` (formula `max(samples_per_group * n_groups * 25, 30000)`, same
+  ratio as v1's `generate_point_ik_dataset.py`), `generic_pool_seed` recorded in the generation
+  report.
+- Derived quantile thresholds from this run's pool: `position_distance_m_low_quantile =
+  0.019073062799465516`, `position_distance_m_high_quantile = 0.1271916326883878`,
+  `orientation_distance_rad_top_quantile = 1.1148948540219186`.
+- Exact counts: 6,000 total, 1,000/group for all six groups, split 1,200/1,200/3,600 overall and
+  200/200/600 for every group (`full_locked_counts: true`).
+
+### Full generation (manual, temporary directory, not committed)
+
+Ran the CLI against a scaffold in the OS temp directory (outside the repo, deleted afterward),
+`--master-seed 42`, no overrides (full locked mode):
+
+- Generation: **~104 s** wall-clock (`time python -m pipelines.run_dataset_v2_tier1_generation
+  --dataset-root <temp> --master-seed 42 --overwrite`) -> wrote exactly 6,000 samples,
+  1,000/group, 1,200/1,200/3,600 split, 200/200/600 per group per split.
+- Validation: **~6 s** wall-clock (`... --validate-only`) -> `total=6000 passed=True`.
+- `DATASET_MANIFEST.json`'s `counts.point_ik` updated with `generated: true`,
+  `full_locked_counts: true`, and the exact group/split/group-split counts above; dataset-wide
+  `generated`/`frozen` flags remain `false` (Tier 0 and Tier 2-4 are not generated by this phase).
+- No NPZ/CSV/generated JSON from this run was added to the repository or Git; the temp directory
+  was deleted after inspection.
+
+### Tests
+
+- Targeted: `pytest tests/test_dataset_v2_point_ik_generation.py
+  tests/test_dataset_v2_point_ik_validation.py -q` -> 40 passed (60 s).
+- Threshold calibration regression: `pytest tests/test_dataset_v2_threshold_calibration.py -q` ->
+  14 passed.
+- Tier 0 v2 regression: `pytest tests/test_dataset_v2_scaffold.py
+  tests/test_dataset_root_resolution.py tests/test_pipeline_tier0.py
+  tests/test_dataset_v2_tier0_generation.py tests/test_dataset_v2_tier0_validation.py -q` ->
+  87 passed.
+- Dataset v1 backward compatibility: `pytest tests/test_pipeline_smoke.py
+  tests/test_point_dataset.py tests/test_trajectory_files.py -q` -> 130 passed, no regression.
+- Full suite: `pytest -q` -> **446 passed, 0 failed, 0 skipped, 0 errors** (406 baseline + 40 new).
+
+### Blockers
+
+- None. The anchor generator's **selection procedure** (spec section G, unimplemented since
+  Phase 1) remains out of scope for this Point-IK-only phase.
+
+### Confirmations
+
+- Dataset v1: **not modified**. `git status --short`/`git diff --name-only` after this phase show
+  only `dataset_v2/config_templates.py`, `dataset_v2/manifest.py`, `dataset_v2/schemas.py`, and
+  `tests/test_dataset_v2_scaffold.py` modified (all Phase 1/2.5 files, extended additively) and
+  `dataset_v2/point_ik_generation.py`, `dataset_v2/point_ik_validation.py`,
+  `pipelines/run_dataset_v2_tier1_generation.py`, `tests/test_dataset_v2_point_ik_generation.py`,
+  `tests/test_dataset_v2_point_ik_validation.py` as new, untracked files. No file under `assets/`,
+  `benchmarks/`, `trajectories/`, `configs/`, `schemas/`, `kinematics/`, `algorithms/`, root
+  `DATASET_MANIFEST.json`, or root `VERSION` was touched.
+- Official Dataset v2 Point-IK data: generated and validated in a temporary directory (see above)
+  to confirm the locked counts/thresholds/runtime are real, but **not** committed to the
+  repository -- no NPZ/CSV/generated JSON from this phase is committed data.
+- DLS was never run, `q_target_reference` was never used as an initial guess anywhere in this
+  phase's code, and `frozen_test` was never used to design the generator, choose a threshold, or
+  tune anything.
+
+### Recommended Phase 4
+
+Per `docs/V2_REPO_AUDIT.md`'s recommended order, next is the anchor generator (12 anchors, 6
+`regular`/3 `near_limit`/3 `near_singular`, split-isolated per spec section G) -- its acceptance
+thresholds are already locked (Phase 2.5) but its **selection procedure** is not yet implemented.
+Anchors are a prerequisite for the core-trajectory phase (120 trajectories, 5 shapes x 2
+orientation modes x 12 anchors) that follows.

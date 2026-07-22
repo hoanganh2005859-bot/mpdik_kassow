@@ -105,3 +105,30 @@ def apply_tier0_generation_status(
     }
     updated["counts"] = counts
     return updated
+
+
+def apply_point_ik_generation_status(
+    manifest: dict,
+    total_samples: int,
+    group_counts: dict,
+    split_counts: dict,
+    group_split_counts: dict,
+    full_locked_counts: bool,
+) -> dict:
+    """Return a copy of ``manifest`` with ``counts.point_ik`` updated to the *actual* generated
+    counts (Phase 3). Never mutates dataset-wide ``generated``/``frozen``/``status`` -- Point-IK
+    being generated does not mean Tier 0/2-4 are (see ``apply_tier0_generation_status``).
+    """
+    updated = dict(manifest)
+    counts = dict(updated.get("counts", {}))
+    counts["point_ik"] = {
+        **dict(counts.get("point_ik", {})),
+        "total_samples": int(total_samples),
+        "generated": True,
+        "full_locked_counts": bool(full_locked_counts),
+        "group_counts": dict(group_counts),
+        "split_counts": dict(split_counts),
+        "group_split_counts": {name: dict(value) for name, value in group_split_counts.items()},
+    }
+    updated["counts"] = counts
+    return updated

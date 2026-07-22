@@ -171,25 +171,84 @@ def tier0_config() -> dict:
 
 def point_ik_config() -> dict:
     samples_per_group = 1000
+    split_sizes_per_group = {"development": 200, "validation": 200, "frozen_test": 600}
     split_sizes = {"development": 1200, "validation": 1200, "frozen_test": 3600}
     return {
         "difficulty_groups": list(DIFFICULTY_GROUPS),
         "samples_per_group": samples_per_group,
         "total_samples": samples_per_group * len(DIFFICULTY_GROUPS),
         "split_sizes": split_sizes,
+        "split_sizes_per_group": split_sizes_per_group,
         "sample_id_pattern": "pik_{split}_{difficulty_group}_{index:05d}",
         "q_target_usage_policy": (
-            "q_target is a reference/provenance value only; it must never be used as q_initial "
+            "q_target_reference is a reference/provenance value only (proves reachability via "
+            "FK and enables joint-space/redundancy analysis); it must never be used as q_initial "
             "for any IK solve evaluating this sample."
         ),
         "difficulty_threshold_config_file": "difficulty_thresholds.json",
         "near_joint_limit_and_near_singularity_status": (
             "thresholds locked in configs/difficulty_thresholds.json (Phase 2.5, "
-            "docs/V2_THRESHOLD_CALIBRATION.md); near_target/medium_target/far_target/"
-            "large_orientation_change quantile thresholds still to be re-derived per spec section 7 "
-            "when Point-IK generation is implemented."
+            "docs/V2_THRESHOLD_CALIBRATION.md), applied as the pair-min of "
+            "(minimum_initial_limit_margin_normalized, minimum_target_limit_margin_normalized) and "
+            "(initial_sigma_min, target_sigma_min) respectively -- same single-configuration "
+            "threshold value reused unchanged, not re-derived per pair."
         ),
-        "status": "counts_locked_generation_not_implemented",
+        "pair_pool_policy": {
+            "pool_size_default": 150000,
+            "pool_size_formula": (
+                "max(samples_per_group * n_groups * 25, 30000) -- same ratio "
+                "generators/generate_point_ik_dataset.py uses for v1's 30000-candidate pool"
+            ),
+            "interior_margin_fraction": 0.01,
+            "interior_margin_note": (
+                "q_initial is sampled with a margin proportional to each joint's own half-range "
+                "(1% of half-range), not v1's flat 0.10 rad -- this avoids the joint_2/joint_4 "
+                "margin-sampling bias documented in docs/V2_THRESHOLD_CALIBRATION.md section 1 "
+                "(a flat-rad margin structurally under-represents the narrow-range joints among "
+                "near-joint-limit candidates). q_target_reference is then q_initial perturbed by a "
+                "random unit direction scaled by a log-uniform magnitude and clipped back into the "
+                "operational limits -- reused unchanged from v1's generic-pool construction."
+            ),
+            "magnitude_log_min": -2.0,
+            "magnitude_log_max": 0.5,
+            "position_low_quantile": 1.0 / 3.0,
+            "position_high_quantile": 2.0 / 3.0,
+            "orientation_top_quantile": 0.85,
+            "quantile_note": (
+                "position 33rd/66th percentile and orientation 85th percentile boundaries reused "
+                "unchanged from v1's generators/generate_point_ik_dataset.py (well-defined, "
+                "non-overlapping, no unintended gaps); computed fresh at generation time from this "
+                "phase's own candidate pool (pool_size_default above), never copied from v1's "
+                "stored quantile values."
+            ),
+        },
+        "diversity_selection_policy": {
+            "method": "stratified deterministic selection over quantile-binned covariates",
+            "covariates": [
+                "initial_joint_space_radius_rad",
+                "target_workspace_radius_m",
+                "orientation_distance_rad",
+                "position_distance_m",
+                "pair_sigma_min",
+                "pair_limit_margin_normalized",
+            ],
+            "bins_per_covariate": 4,
+            "selection_procedure": (
+                "each eligible candidate pair is assigned a composite stratum key from "
+                "quantile-binning each covariate (bin edges computed over that difficulty group's "
+                "own eligible candidate pool); a seeded permutation (derived from the master seed) "
+                "sets the draw order within each stratum; the group's exact quota (1000) is drawn "
+                "round-robin across occupied strata until met or the pool is exhausted (an "
+                "exhausted pool raises an actionable error reporting the group and candidate count "
+                "rather than relaxing a threshold or duplicating a sample)."
+            ),
+            "diversity_note": (
+                "prevents concentrating a difficulty group's 1000 samples in one joint-space or "
+                "Cartesian-workspace region; never uses DLS/solver outcome; never changes a "
+                "locked/derived threshold; see spec section 6."
+            ),
+        },
+        "status": "counts_locked_generation_implemented",
     }
 
 

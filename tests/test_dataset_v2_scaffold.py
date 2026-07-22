@@ -191,16 +191,15 @@ def test_schemas_are_all_valid_draft202012(v2_root):
         jsonschema.Draft202012Validator.check_schema(schema)
 
 
-def test_point_ik_schema_accepts_a_conforming_record(v2_root):
-    paths = create_dataset_v2_scaffold(v2_root, master_seed=MASTER_SEED)
-    schema = json.loads((paths.schemas_dir / "point_ik_schema.json").read_text(encoding="utf-8"))
-    validator = jsonschema.Draft202012Validator(schema)
-    record = {
+def _point_ik_conforming_record():
+    return {
         "sample_id": "pik_development_near_target_00042",
         "split": "development",
         "difficulty_group": "near_target",
         "q_initial": [0.0] * 7,
-        "q_target": [0.1] * 7,
+        "q_target_reference": [0.1] * 7,
+        "initial_position": [0.0, 0.1, 0.2],
+        "initial_quaternion": [1.0, 0.0, 0.0, 0.0],
         "target_position": [0.1, 0.2, 0.3],
         "target_quaternion": [1.0, 0.0, 0.0, 0.0],
         "position_distance_m": 0.05,
@@ -208,36 +207,30 @@ def test_point_ik_schema_accepts_a_conforming_record(v2_root):
         "joint_distance_rad": 0.1,
         "initial_sigma_min": 0.2,
         "target_sigma_min": 0.2,
-        "minimum_initial_limit_margin": 0.5,
-        "minimum_target_limit_margin": 0.5,
+        "initial_sigma_max": 0.5,
+        "target_sigma_max": 0.5,
+        "initial_condition_number": 2.5,
+        "target_condition_number": 2.5,
+        "minimum_initial_limit_margin_normalized": 0.5,
+        "minimum_target_limit_margin_normalized": 0.5,
         "source_seed": 12345,
         "content_hash": "a" * 64,
     }
-    validator.validate(record)  # must not raise
+
+
+def test_point_ik_schema_accepts_a_conforming_record(v2_root):
+    paths = create_dataset_v2_scaffold(v2_root, master_seed=MASTER_SEED)
+    schema = json.loads((paths.schemas_dir / "point_ik_schema.json").read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(schema)
+    validator.validate(_point_ik_conforming_record())  # must not raise
 
 
 def test_point_ik_schema_rejects_bad_split(v2_root):
     paths = create_dataset_v2_scaffold(v2_root, master_seed=MASTER_SEED)
     schema = json.loads((paths.schemas_dir / "point_ik_schema.json").read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(schema)
-    record = {
-        "sample_id": "pik_development_near_target_00042",
-        "split": "not_a_real_split",
-        "difficulty_group": "near_target",
-        "q_initial": [0.0] * 7,
-        "q_target": [0.1] * 7,
-        "target_position": [0.1, 0.2, 0.3],
-        "target_quaternion": [1.0, 0.0, 0.0, 0.0],
-        "position_distance_m": 0.05,
-        "orientation_distance_rad": 0.01,
-        "joint_distance_rad": 0.1,
-        "initial_sigma_min": 0.2,
-        "target_sigma_min": 0.2,
-        "minimum_initial_limit_margin": 0.5,
-        "minimum_target_limit_margin": 0.5,
-        "source_seed": 12345,
-        "content_hash": "a" * 64,
-    }
+    record = _point_ik_conforming_record()
+    record["split"] = "not_a_real_split"
     with pytest.raises(jsonschema.ValidationError):
         validator.validate(record)
 
