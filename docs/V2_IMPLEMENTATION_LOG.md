@@ -315,3 +315,117 @@ samples, 6 difficulty groups x 1,000, `development`/`validation`/`frozen_test` s
 generator's `near_limit`/`near_singular` threshold blocker (spec section G) that Point-IK's
 `near_joint_limit`/`near_singularity` groups and the later core-trajectory anchors both depend on.
 Both remain explicitly out of scope for Phase 2.
+
+## Phase 2.5 — Threshold calibration (near_joint_limit / near_singularity / moderately_conditioned / regular)
+
+- **Status**: complete. Calibrates thresholds only; no Point-IK samples, anchors, trajectories, or
+  trials were generated.
+- **Baseline before this phase**: branch `feature/dataset-v2`, commit
+  `77674d023156e05ebe7ce1740fb5dd1317d65df1`, clean working tree, `pytest -q` -> 391 passed,
+  0 failed/skipped/errored.
+
+### Files added/modified
+
+- **New**: `dataset_v2/threshold_calibration.py` -- calibration module. Builds two deterministic,
+  duplicate-free candidate pools (a generic uniform-interior pool with a per-joint
+  range-proportional margin, and a singularity-biased pool reusing
+  `dataset_v2/tier0_generation.py::_build_singularity_candidate_pool` unchanged), computes real
+  normalized/absolute joint-limit margin, `sigma_min`/`sigma_max`/`condition_number`/
+  `numerical_rank`/manipulability/FK position per candidate (`kinematics/` unchanged, no DLS), and
+  derives/reports the four locked thresholds. Never writes a candidate pool to disk, never touches
+  `numpy`'s global random state, never uses DLS convergence/error, `q_target`-as-solution, or
+  frozen-test data.
+- **New**: `pipelines/run_dataset_v2_threshold_calibration.py` -- CLI
+  (`python -m pipelines.run_dataset_v2_threshold_calibration --seed N`), prints the scalar
+  calibration report as JSON; `--report-json PATH` optionally writes it to a caller-supplied path
+  (never a Dataset v2 root or the repo).
+- **Modified** (extended, not rewritten): `dataset_v2/config_templates.py` -- added
+  `difficulty_threshold_config()` (new `configs/difficulty_thresholds.json`, `status: "locked"`,
+  containing the calibrated thresholds, candidate pool sizes, calibration seed, and classification
+  priority) and updated `anchor_config()`'s `near_limit`/`near_singular` acceptance criteria from
+  `"unresolved"` to `"locked"`, referencing the same calibrated values (never a second,
+  independently-invented number). `all_configs()` now returns 12 files (was 11).
+- **Modified**: `specs/DLS_DATASET_V2_SPEC.md` section G ("Anchor policy") -- the previously
+  `[BLOCKER]` near_limit/near_singular acceptance thresholds are now `[LOCKED]` with concrete
+  numeric values, sourced from this phase's calibration; the anchor *selection procedure* itself
+  remains `[PROVISIONAL]`/unimplemented. Section F ("Point-IK generation policy") gained a note on
+  the shared thresholds/classification priority (unchanged from v1).
+- **New**: `docs/V2_THRESHOLD_CALIBRATION.md` -- full calibration report (baseline, seed, pool
+  sizes, formulas, distribution tables, selected thresholds, classification priority, expected
+  candidate counts, rationale, limitations, reproducibility command).
+- **New tests**: `tests/test_dataset_v2_threshold_calibration.py` (14 tests: determinism at a fixed
+  seed; different seed produces different pool/thresholds; pools are duplicate-free and
+  limit-respecting; normalized-margin formula matches `kinematics/joint_limit_utils.py` directly;
+  `sigma_min` matches `kinematics/singularity_metrics.py` directly; classification boundary
+  behavior (`<=` is near, exclusive above); the sigma-axis tri-state and the "regular anchor"
+  combination are non-overlapping; a regular interior configuration classifies as regular (and a
+  note that `q=0` is itself an exact singularity for this model, discovered while picking that
+  fixture); near-singular classification traced back to a directly recomputed `sigma_min`;
+  candidate counts are sufficient (proportional check plus the biased-pool absolute counts);
+  `difficulty_thresholds.json` parses and matches the calibration module's constants; the new
+  config file is present in `all_configs()`; Dataset v1's `configs/dls_config.json` is read but
+  never written by calibration).
+- **Modified**: `tests/test_dataset_v2_scaffold.py` -- `test_configs_all_parse_as_json` updated
+  11 -> 12 config files; the old `test_anchor_config_does_not_invent_unresolved_thresholds` was
+  replaced with `test_anchor_config_thresholds_are_locked_by_calibration_not_invented` (asserts
+  `"locked"` status and that `anchor_config.json`'s numeric thresholds equal
+  `difficulty_thresholds.json`'s, not a second invented value) plus a new
+  `test_difficulty_thresholds_config_is_well_formed`.
+
+### Calibration run actually executed
+
+`python -m pipelines.run_dataset_v2_threshold_calibration --seed 42` (locked default pool sizes:
+50,000 generic + 20,000 singularity-biased) -- ~31s wall-clock. Key results (full detail in
+`docs/V2_THRESHOLD_CALIBRATION.md`):
+
+- `near_joint_limit`: normalized margin `<= 0.024991237796029034` (P10 of the generic pool's
+  per-configuration normalized minimum joint-limit margin). An initial flat-rad interior margin
+  (matching v1 Point-IK's `INTERIOR_MARGIN_RAD=0.10`) was found to structurally exclude
+  `joint_2`/`joint_4` from ever being the near-limit controlling joint (their half-range is ~2.9x
+  smaller than the other five joints'); switched the generic pool to a per-joint
+  range-proportional margin (1% of half-range) before deriving the threshold, confirmed by the
+  controlling-joint histogram becoming even across all seven joints.
+- `near_singularity`: `sigma_min <= 0.03`, reused unchanged from v1's
+  `configs/dls_config.json:singularity_sigma_threshold` -- audited against
+  `generators/_trajectory_common.py::select_anchor` and Tier 0's own singularity classifier and
+  found consistent with both (same threshold, same `3.0` moderate-upper multiplier).
+- `moderately_conditioned_upper_bound = 0.09`; `regular` = `sigma_min > 0.09` **and**
+  `normalized_joint_limit_margin > 0.024991237796029034`.
+- Candidate sufficiency confirmed empirically: 5,000/50,000 generic-pool candidates near-limit,
+  6,038/20,000 singularity-biased-pool candidates near-singular, 24,736/50,000 generic-pool
+  candidates regular -- all far exceeding Point-IK's 1,000-per-group need and anchors' 3-6-per-class
+  need.
+- Determinism verified: identical seed/pool-size reruns produce byte-identical candidate arrays;
+  seed 42 vs. 43 produce different pools and different thresholds.
+
+### Tests
+
+- Targeted: `pytest tests/test_dataset_v2_threshold_calibration.py -q` -> 14 passed.
+- Dataset v2 regression: `pytest tests/test_dataset_v2_scaffold.py tests/test_dataset_root_resolution.py tests/test_pipeline_tier0.py tests/test_dataset_v2_tier0_generation.py tests/test_dataset_v2_tier0_validation.py -q` -> passed (see final report for the exact count).
+- Dataset v1 backward compatibility: `pytest tests/test_pipeline_smoke.py tests/test_point_dataset.py tests/test_trajectory_files.py -q` -> passed, no regression.
+- Full suite: `pytest -q` -> see final report for the exact pass count.
+
+### Blockers
+
+- None new. The anchor **selection procedure** (not just the now-locked acceptance thresholds)
+  remains unimplemented and is recommended as part of Phase 3's anchor generator.
+
+### Confirmations
+
+- Dataset v1: **not modified**. Only `dataset_v2/`, `pipelines/`, `specs/`, `docs/`, and `tests/`
+  files were touched; no file under `assets/`, `benchmarks/`, `trajectories/`, root
+  `DATASET_MANIFEST.json`, or root `VERSION` was touched.
+- Official Dataset v2 data: **not generated**. No Point-IK samples, anchors, trajectories, or
+  trials were produced; only threshold values (a handful of scalars) were computed and recorded in
+  `dataset_v2/config_templates.py`'s constants / `configs/difficulty_thresholds.json`'s builder.
+- No candidate pool was written to disk or committed at any point in this phase.
+
+### Recommended Phase 3
+
+Point-IK Tier 1 generator (6,000 samples, 6 groups x 1,000, `development`/`validation`/
+`frozen_test` split 1,200/1,200/3,600) can now reuse this phase's locked `near_joint_limit`/
+`near_singularity` thresholds directly, deriving only the remaining four groups'
+(`near_target`/`medium_target`/`far_target`/`large_orientation_change`) quantile thresholds from
+its own generation-time pool (analogous to v1's `_derive_thresholds`). Alternatively, the anchor
+generator's **selection procedure** (searching for diverse anchors satisfying this phase's locked
+thresholds) can be implemented next, unblocked by this phase.

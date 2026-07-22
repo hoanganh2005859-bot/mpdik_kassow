@@ -118,7 +118,7 @@ def test_manifest_counts_match_locked_spec(v2_root):
 def test_configs_all_parse_as_json(v2_root):
     paths = create_dataset_v2_scaffold(v2_root, master_seed=MASTER_SEED)
     config_files = sorted(paths.configs_dir.glob("*.json"))
-    assert len(config_files) == 11
+    assert len(config_files) == 12
     for path in config_files:
         json.loads(path.read_text(encoding="utf-8"))  # must not raise
 
@@ -131,13 +131,49 @@ def test_seed_policy_records_master_seed_explicitly(v2_root):
     assert "split_tags" in seed_policy
 
 
-def test_anchor_config_does_not_invent_unresolved_thresholds(v2_root):
+def test_anchor_config_thresholds_are_locked_by_calibration_not_invented(v2_root):
     paths = create_dataset_v2_scaffold(v2_root, master_seed=MASTER_SEED)
     anchor_config = json.loads((paths.configs_dir / "anchor_config.json").read_text(encoding="utf-8"))
-    assert anchor_config["acceptance_criteria"]["near_limit"]["status"] == "unresolved"
-    assert anchor_config["acceptance_criteria"]["near_singular"]["status"] == "unresolved"
+    difficulty_thresholds = json.loads((paths.configs_dir / "difficulty_thresholds.json").read_text(encoding="utf-8"))
+
+    assert difficulty_thresholds["status"] == "locked"
+    assert anchor_config["acceptance_criteria"]["near_limit"]["status"] == "locked"
+    assert anchor_config["acceptance_criteria"]["near_singular"]["status"] == "locked"
+    # thresholds must match the calibrated values in configs/difficulty_thresholds.json, not a
+    # second, independently-invented number
+    assert (
+        anchor_config["acceptance_criteria"]["near_limit"]["threshold_normalized_joint_limit_margin"]
+        == difficulty_thresholds["near_joint_limit"]["threshold_normalized"]
+    )
+    assert (
+        anchor_config["acceptance_criteria"]["near_singular"]["threshold_sigma_min"]
+        == difficulty_thresholds["near_singularity"]["threshold_sigma_min"]
+    )
     # regular is not blocked -- v1's select_anchor predicate already covers it
     assert isinstance(anchor_config["acceptance_criteria"]["regular"], str)
+
+
+def test_difficulty_thresholds_config_is_well_formed(v2_root):
+    paths = create_dataset_v2_scaffold(v2_root, master_seed=MASTER_SEED)
+    config = json.loads((paths.configs_dir / "difficulty_thresholds.json").read_text(encoding="utf-8"))
+
+    assert config["status"] == "locked"
+    assert 0.0 < config["near_joint_limit"]["threshold_normalized"] < 1.0
+    assert config["near_singularity"]["threshold_sigma_min"] > 0.0
+    assert (
+        config["moderately_conditioned"]["upper_bound_sigma_min"]
+        > config["near_singularity"]["threshold_sigma_min"]
+    )
+    assert config["regular"]["min_sigma_min"] == config["moderately_conditioned"]["upper_bound_sigma_min"]
+    assert config["regular"]["min_normalized_joint_limit_margin"] == config["near_joint_limit"]["threshold_normalized"]
+    assert config["classification_priority_highest_first"] == [
+        "near_singularity",
+        "near_joint_limit",
+        "large_orientation_change",
+        "far_target",
+        "medium_target",
+        "near_target",
+    ]
 
 
 def test_evaluation_defaults_are_not_invented(v2_root):

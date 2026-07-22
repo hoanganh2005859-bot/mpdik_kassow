@@ -173,8 +173,19 @@ Rules tied to this layout **[LOCKED]**:
 - Duplicate protection: no two samples (within or across splits) may share the same
   `(q_initial, q_target)` pair or the same computed content hash (see section N); generation must
   reject/redraw on collision rather than silently keeping duplicates.
+- **[LOCKED] Difficulty-group thresholds and priority** (Phase 2.5 calibration —
+  `docs/V2_THRESHOLD_CALIBRATION.md`, `configs/difficulty_thresholds.json`): `near_joint_limit` and
+  `near_singularity` reuse the same normalized-margin (`0.024991237796029034`) and `sigma_min`
+  (`0.03`) thresholds as anchors (section G) and trial covariates, so all three consumers agree on
+  what "near the limit"/"near-singular" means. `near_target`/`medium_target`/`far_target`/
+  `large_orientation_change` quantile thresholds are **not** calibrated by this phase (out of
+  scope — Phase 2.5 covers only the four groups named in its charter) and remain to be re-derived,
+  analogous to v1's `_derive_thresholds`, when Point-IK generation is implemented. When a candidate
+  pair qualifies for more than one group, priority (highest first) is: `near_singularity` >
+  `near_joint_limit` > `large_orientation_change` > `far_target` > `medium_target` >
+  `near_target` — unchanged from v1's `generate_point_ik_dataset.py::PRIORITY_ORDER`.
 
-## G. Anchor policy [LOCKED counts/classes, PROVISIONAL acceptance criteria]
+## G. Anchor policy [LOCKED counts/classes/acceptance-threshold values, PROVISIONAL selection procedure]
 
 - **[LOCKED]** 12 anchors total: 6 `regular`, 3 `near_limit`, 3 `near_singular`.
 - **[LOCKED]** Split isolation: an anchor's `anchor_id` is fixed to exactly the trajectories that
@@ -182,19 +193,30 @@ Rules tied to this layout **[LOCKED]**:
   `anchor_id` may be reused across a `development`/`validation`/`frozen_test` trajectory pair in
   a way that leaks anchor identity as a shortcut signal (i.e. document, per anchor, every
   trajectory/split that consumes it, and keep that mapping visible in `anchor_manifest.csv`).
-- **[PROVISIONAL] Acceptance criteria**:
+- **[LOCKED] Acceptance criteria** (numeric thresholds locked by Phase 2.5 calibration —
+  `docs/V2_THRESHOLD_CALIBRATION.md`, `configs/difficulty_thresholds.json`):
   - `regular`: `sigma_min` comfortably above the singularity threshold *and* joint-limit margin
-    comfortably interior — this reuses v1's `select_anchor` predicate as-is.
-  - `near_limit`: joint-limit margin below an explicit, small threshold (config-driven, e.g. the
-    bottom quantile used for Point-IK's `near_joint_limit` group) while remaining a valid,
-    reachable configuration (never an actual limit violation).
-  - `near_singular`: `sigma_min` below an explicit, small threshold (config-driven, symmetric with
-    Point-IK's `near_singularity` group) while remaining numerically solvable by the existing DLS
-    solver (adaptive damping must keep the anchor's own FK/reachability check well-defined).
-  - **[BLOCKER]**: the exact numeric thresholds for `near_limit`/`near_singular` anchors are not
-    yet fixed; v1's `select_anchor` only implements the `regular` predicate. Phase 1 must define
-    these thresholds (e.g. by quantiles of a generic pool, analogous to
-    `generate_point_ik_dataset.py::_derive_thresholds`) before anchor generation can run.
+    comfortably interior — this reuses v1's `select_anchor` predicate as-is. Calibrated as
+    `sigma_min > 0.09` (`moderately_conditioned_upper_bound`) **and**
+    `normalized_joint_limit_margin > 0.024991237796029034` (`near_joint_limit` threshold's
+    complement).
+  - `near_limit`: `normalized_joint_limit_margin <= 0.024991237796029034` (the calibration pool's
+    P10 quantile of the per-configuration minimum normalized joint-limit margin — normalized, not
+    absolute-rad, because KR810's joint_2/joint_4 operational half-range, ~2.18 rad, is ~2.9x
+    smaller than the other five joints' ~6.28 rad; an absolute-rad threshold was empirically found
+    to make joint_2/joint_4 the near-limit "controlling joint" ~6x more often than the other five —
+    see the calibration doc) while remaining a valid, reachable configuration (never an actual
+    limit violation).
+  - `near_singular`: `sigma_min <= 0.03`, reused unchanged from v1's shared
+    `configs/dls_config.json:singularity_sigma_threshold` (already reused by
+    `generators/_trajectory_common.py::select_anchor`'s `ANCHOR_SIGMA_RATIO=3.0` predicate and by
+    Dataset v2 Tier 0's own singularity-state classifier — audited in the calibration doc and found
+    consistent with all three), while remaining numerically solvable by the existing DLS solver
+    (adaptive damping must keep the anchor's own FK/reachability check well-defined).
+  - **[PROVISIONAL]**: the concrete *search/selection procedure* that picks 3 diverse `near_limit`
+    and 3 diverse `near_singular` anchors satisfying these locked thresholds (workspace + joint-
+    space diversity, analogous to `select_anchor`'s search loop) is not yet implemented — only the
+    acceptance thresholds are locked here. Anchor generation itself remains a later phase.
 
 ## H. Core trajectory policy [LOCKED]
 

@@ -40,6 +40,34 @@ SEED_COMPONENT_TAGS = {
 }
 SEED_SPLIT_TAGS = {"development": 1, "validation": 2, "frozen_test": 3}
 
+# Phase 2.5 threshold calibration results (docs/V2_THRESHOLD_CALIBRATION.md), locked for reuse
+# across Tier 1 Point-IK difficulty groups, the 12 anchor configurations, and trial difficulty
+# covariates. Derived from a 50,000-candidate generic pool (calibration seed 42) via
+# dataset_v2.threshold_calibration.calibrate; near_joint_limit uses the pool's own P10 quantile of
+# the normalized joint-limit margin (kinematics/joint_limit_utils.py::minimum_joint_limit_margin);
+# near_singularity reuses v1's configs/dls_config.json:singularity_sigma_threshold unchanged
+# (already reused by generators/_trajectory_common.py::select_anchor and Tier 0's own singularity
+# classifier); moderately_conditioned_upper_bound reuses the same 3.0 multiplier both of those
+# already use.
+CALIBRATION_SEED = 42
+CALIBRATION_GENERIC_POOL_SIZE = 50000
+CALIBRATION_SINGULARITY_POOL_SIZE = 20000
+NEAR_JOINT_LIMIT_NORMALIZED_MARGIN_THRESHOLD = 0.024991237796029034
+NEAR_JOINT_LIMIT_ABSOLUTE_MARGIN_RAD_DIAGNOSTIC = 0.10238099902013219
+NEAR_SINGULARITY_SIGMA_MIN_THRESHOLD = 0.03
+MODERATELY_CONDITIONED_UPPER_BOUND = 0.09
+MODERATE_UPPER_MULTIPLIER = 3.0
+REGULAR_MIN_SIGMA_MIN = MODERATELY_CONDITIONED_UPPER_BOUND
+REGULAR_MIN_NORMALIZED_MARGIN = NEAR_JOINT_LIMIT_NORMALIZED_MARGIN_THRESHOLD
+CLASSIFICATION_PRIORITY_HIGHEST_FIRST = [
+    "near_singularity",
+    "near_joint_limit",
+    "large_orientation_change",
+    "far_target",
+    "medium_target",
+    "near_target",
+]
+
 
 def dataset_config() -> dict:
     return {
@@ -154,7 +182,79 @@ def point_ik_config() -> dict:
             "q_target is a reference/provenance value only; it must never be used as q_initial "
             "for any IK solve evaluating this sample."
         ),
+        "difficulty_threshold_config_file": "difficulty_thresholds.json",
+        "near_joint_limit_and_near_singularity_status": (
+            "thresholds locked in configs/difficulty_thresholds.json (Phase 2.5, "
+            "docs/V2_THRESHOLD_CALIBRATION.md); near_target/medium_target/far_target/"
+            "large_orientation_change quantile thresholds still to be re-derived per spec section 7 "
+            "when Point-IK generation is implemented."
+        ),
         "status": "counts_locked_generation_not_implemented",
+    }
+
+
+def difficulty_threshold_config() -> dict:
+    """Phase 2.5 calibrated thresholds shared by Point-IK, anchors, and trial covariates.
+
+    See docs/V2_THRESHOLD_CALIBRATION.md for the full derivation, distribution report, and
+    reproducibility command. Values here are locked (supported by the calibration run recorded in
+    that document), not guessed -- generation itself (Point-IK/anchor/trial phases) is still not
+    implemented.
+    """
+    return {
+        "status": "locked",
+        "calibration_source": "docs/V2_THRESHOLD_CALIBRATION.md",
+        "calibration_seed": CALIBRATION_SEED,
+        "candidate_pool_size": {
+            "generic": CALIBRATION_GENERIC_POOL_SIZE,
+            "singularity_biased": CALIBRATION_SINGULARITY_POOL_SIZE,
+        },
+        "near_joint_limit": {
+            "metric": "normalized_joint_limit_margin",
+            "metric_source": "kinematics/joint_limit_utils.py::minimum_joint_limit_margin",
+            "definition": "normalized",
+            "threshold_normalized": NEAR_JOINT_LIMIT_NORMALIZED_MARGIN_THRESHOLD,
+            "threshold_percentile": 10,
+            "rationale": (
+                "P10 of the generic candidate pool's per-configuration normalized minimum "
+                "joint-limit margin; normalized (not absolute-rad) because KR810's operational "
+                "half-ranges differ ~2.9x between joint_2/joint_4 (~2.18 rad) and the other five "
+                "joints (~6.28 rad) -- an absolute-rad threshold was found to make joint_2/joint_4 "
+                "control the ranking ~6x more often than the other joints (see calibration doc)."
+            ),
+            "absolute_threshold_rad_diagnostic": NEAR_JOINT_LIMIT_ABSOLUTE_MARGIN_RAD_DIAGNOSTIC,
+            "absolute_threshold_status": "diagnostic_only_not_used_for_classification",
+        },
+        "near_singularity": {
+            "metric": "sigma_min",
+            "metric_source": "kinematics/singularity_metrics.py::minimum_singular_value",
+            "threshold_sigma_min": NEAR_SINGULARITY_SIGMA_MIN_THRESHOLD,
+            "threshold_source": (
+                "reused unchanged from repo root configs/dls_config.json:"
+                "singularity_sigma_threshold (v1 shared DLS config); already reused by "
+                "generators/_trajectory_common.py::select_anchor (ANCHOR_SIGMA_RATIO=3.0) and by "
+                "dataset_v2/tier0_generation.py's Tier 0 singularity-state classifier"
+            ),
+        },
+        "moderately_conditioned": {
+            "upper_bound_sigma_min": MODERATELY_CONDITIONED_UPPER_BOUND,
+            "multiplier": MODERATE_UPPER_MULTIPLIER,
+            "multiplier_source": (
+                "same 3.0 multiplier already used by select_anchor's ANCHOR_SIGMA_RATIO and by "
+                "Tier 0's singularity_moderate_upper_multiplier"
+            ),
+        },
+        "regular": {
+            "min_sigma_min": REGULAR_MIN_SIGMA_MIN,
+            "min_normalized_joint_limit_margin": REGULAR_MIN_NORMALIZED_MARGIN,
+            "note": "regular = sigma_min > moderately_conditioned upper bound AND normalized margin > near_joint_limit threshold (non-overlapping complement of the other two classes).",
+        },
+        "classification_priority_highest_first": list(CLASSIFICATION_PRIORITY_HIGHEST_FIRST),
+        "classification_priority_note": (
+            "A candidate qualifying for more than one difficulty group is assigned to the "
+            "highest-priority group in classification_priority_highest_first; matches v1's "
+            "generators/generate_point_ik_dataset.py::PRIORITY_ORDER unchanged."
+        ),
     }
 
 
@@ -170,23 +270,26 @@ def anchor_config() -> dict:
                 "predicate as-is)."
             ),
             "near_limit": {
-                "status": "unresolved",
+                "status": "locked",
+                "threshold_normalized_joint_limit_margin": NEAR_JOINT_LIMIT_NORMALIZED_MARGIN_THRESHOLD,
                 "note": (
-                    "Exact joint-limit-margin threshold not yet fixed by "
-                    "specs/DLS_DATASET_V2_SPEC.md (section G [BLOCKER]); must be decided before "
-                    "anchor generation can run. Not invented here."
+                    "normalized_joint_limit_margin <= threshold_normalized_joint_limit_margin "
+                    "(see configs/difficulty_thresholds.json, docs/V2_THRESHOLD_CALIBRATION.md), "
+                    "while remaining a valid, reachable configuration (never an actual limit "
+                    "violation)."
                 ),
             },
             "near_singular": {
-                "status": "unresolved",
+                "status": "locked",
+                "threshold_sigma_min": NEAR_SINGULARITY_SIGMA_MIN_THRESHOLD,
                 "note": (
-                    "Exact sigma_min threshold not yet fixed by specs/DLS_DATASET_V2_SPEC.md "
-                    "(section G [BLOCKER]); must be decided before anchor generation can run. "
-                    "Not invented here."
+                    "sigma_min <= threshold_sigma_min (see configs/difficulty_thresholds.json, "
+                    "docs/V2_THRESHOLD_CALIBRATION.md), while remaining numerically solvable by "
+                    "the existing DLS solver."
                 ),
             },
         },
-        "status": "counts_locked_thresholds_unresolved_generation_not_implemented",
+        "status": "counts_and_thresholds_locked_generation_not_implemented",
     }
 
 
@@ -274,6 +377,7 @@ def all_configs(master_seed: int) -> Dict[str, dict]:
         "seed_policy.json": seed_policy_config(master_seed),
         "tier0_config.json": tier0_config(),
         "point_ik_config.json": point_ik_config(),
+        "difficulty_thresholds.json": difficulty_threshold_config(),
         "anchor_config.json": anchor_config(),
         "trajectory_config.json": trajectory_config(),
         "random_challenge_config.json": random_challenge_config(),
