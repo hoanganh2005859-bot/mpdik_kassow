@@ -10,3 +10,5 @@ results/
 smoke_results/
 temporary_results/
 *.zip
+.venv/
+.pytest_cache/
