@@ -1,0 +1,76 @@
+"""Builds Dataset v2's root ``DATASET_MANIFEST.json`` (spec section M).
+
+Declares scope, all [LOCKED] counts from spec section B, split sizes, and pointers to the
+checksum manifest / generation report -- but never claims data has been generated or frozen; that
+only becomes true once an actual generation phase runs (Phase 1 does not).
+"""
+
+from dataset_v2.config_templates import (
+    CORE_SHAPES,
+    DATASET_VERSION,
+    DIFFICULTY_GROUPS,
+    ORIENTATION_MODES,
+)
+
+
+def build_dataset_manifest() -> dict:
+    point_ik_samples_per_group = 1000
+    point_ik_split_sizes = {"development": 1200, "validation": 1200, "frozen_test": 3600}
+    core_total = len(CORE_SHAPES) * len(ORIENTATION_MODES) * 12
+    random_challenge_split_sizes = {"development": 30, "validation": 30, "frozen_test": 30}
+    random_challenge_total = sum(random_challenge_split_sizes.values())
+    trajectories_total = core_total + random_challenge_total
+    canonical_waypoints_per_trajectory = 400
+
+    return {
+        "dataset_name": "kassow-kr810-dataset-v2-tier0-tier4-kinematics",
+        "dataset_version": DATASET_VERSION,
+        "status": "scaffold",
+        "generated": False,
+        "frozen": False,
+        "scope": {
+            "tiers_included": [
+                "tier0_kinematics_validation",
+                "tier1_point_ik",
+                "tier2_anchors_and_core_trajectories",
+                "tier3_random_challenge_trajectories",
+                "tier4_trials",
+            ],
+            "includes_dynamic_control": False,
+            "includes_ppo": False,
+            "includes_mpdik": False,
+            "includes_mappo": False,
+        },
+        "counts": {
+            "tier0": {"fk_states": 1000, "jacobian_states": 1000, "singularity_states": 600},
+            "point_ik": {
+                "total_samples": point_ik_samples_per_group * len(DIFFICULTY_GROUPS),
+                "samples_per_group": point_ik_samples_per_group,
+                "groups": len(DIFFICULTY_GROUPS),
+                "split_sizes": point_ik_split_sizes,
+            },
+            "anchors": {"total": 12, "regular": 6, "near_limit": 3, "near_singular": 3},
+            "core_trajectories": {
+                "total": core_total,
+                "shapes": len(CORE_SHAPES),
+                "orientation_modes": len(ORIENTATION_MODES),
+                "anchors": 12,
+            },
+            "random_challenge_trajectories": {
+                "total": random_challenge_total,
+                "split_sizes": random_challenge_split_sizes,
+            },
+            "trajectories_total": trajectories_total,
+            "canonical_waypoints_per_trajectory": canonical_waypoints_per_trajectory,
+            "canonical_poses_total": trajectories_total * canonical_waypoints_per_trajectory,
+            "trials_total": trajectories_total * 3,
+        },
+        "pointers": {
+            "checksum_manifest": "checksums/CHECKSUM_MANIFEST.json",
+            "generation_report": "reports/GENERATION_REPORT.json",
+        },
+        "notes": [
+            "Phase 1 scaffold only: no Tier 0-4 data has been generated for Dataset v2.",
+            "See docs/V2_IMPLEMENTATION_LOG.md and specs/DLS_DATASET_V2_SPEC.md for status and design.",
+        ],
+    }

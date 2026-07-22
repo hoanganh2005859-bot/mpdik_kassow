@@ -1,0 +1,356 @@
+"""Builders for Dataset v2's JSON Schema scaffold (``<dataset_v2_root>/schemas/*.json``).
+
+Draft 2020-12, ``additionalProperties: false`` on every record-shaped schema, mirroring the style
+of the repo's existing ``schemas/point_ik_schema.json``/``schemas/trajectory_schema.json`` (see
+``specs/DLS_DATASET_V2_SPEC.md`` section L). These schemas validate the *metadata/manifest record*
+shape locked/provisioned by the spec; they do not need to describe generated NPZ array payloads
+in full since Phase 1 generates no data (section L: "extendable without breaking backward
+compatibility").
+"""
+
+from typing import Dict
+
+SHA256_PATTERN = "^[a-f0-9]{64}$"
+SPLIT_ENUM = ["development", "validation", "frozen_test"]
+DIFFICULTY_ENUM = [
+    "near_target",
+    "medium_target",
+    "far_target",
+    "large_orientation_change",
+    "near_joint_limit",
+    "near_singularity",
+]
+ORIENTATION_MODE_ENUM = ["fixed", "variable"]
+TRAJECTORY_FAMILY_ENUM = ["line", "circle", "figure8", "helix", "free_form", "random_challenge"]
+ANCHOR_CLASS_ENUM = ["regular", "near_limit", "near_singular"]
+INIT_CLASS_ENUM = ["easy", "medium", "hard"]
+
+_QUATERNION_WXYZ = {
+    "type": "array",
+    "description": "Unit quaternion [w, x, y, z] (wxyz order), world frame.",
+    "items": {"type": "number"},
+    "minItems": 4,
+    "maxItems": 4,
+}
+
+
+def dataset_manifest_schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "dataset_manifest_schema.json",
+        "title": "Dataset v2 Manifest",
+        "description": "Root DATASET_MANIFEST.json for a Dataset v2 root.",
+        "type": "object",
+        "required": ["dataset_name", "dataset_version", "status", "generated", "frozen", "scope"],
+        "properties": {
+            "dataset_name": {"type": "string", "minLength": 1},
+            "dataset_version": {"type": "string", "minLength": 1},
+            "status": {"type": "string", "minLength": 1},
+            "generated": {
+                "type": "boolean",
+                "description": "Must be false until Tier 0-4 data has actually been generated.",
+            },
+            "frozen": {
+                "type": "boolean",
+                "description": "Must be false until frozen_test has been locked per the frozen-test protocol.",
+            },
+            "scope": {
+                "type": "object",
+                "required": [
+                    "tiers_included",
+                    "includes_dynamic_control",
+                    "includes_ppo",
+                    "includes_mpdik",
+                    "includes_mappo",
+                ],
+                "properties": {
+                    "tiers_included": {"type": "array", "items": {"type": "string"}},
+                    "includes_dynamic_control": {"type": "boolean", "const": False},
+                    "includes_ppo": {"type": "boolean", "const": False},
+                    "includes_mpdik": {"type": "boolean", "const": False},
+                    "includes_mappo": {"type": "boolean", "const": False},
+                },
+                "additionalProperties": False,
+            },
+            "counts": {"type": "object"},
+            "pointers": {"type": "object"},
+            "notes": {"type": "array", "items": {"type": "string"}},
+        },
+        "additionalProperties": False,
+    }
+
+
+def generation_config_schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "generation_config_schema.json",
+        "title": "Dataset v2 Seed/Generation Config",
+        "description": "configs/seed_policy.json: the master seed and derivation-tag hierarchy for Dataset v2 generation.",
+        "type": "object",
+        "required": ["master_seed", "derivation_scheme", "component_tags", "split_tags", "status"],
+        "properties": {
+            "master_seed": {"type": "integer"},
+            "derivation_scheme": {"type": "string", "minLength": 1},
+            "component_tags": {
+                "type": "object",
+                "additionalProperties": {"type": "integer"},
+            },
+            "split_tags": {
+                "type": "object",
+                "propertyNames": {"enum": SPLIT_ENUM},
+                "additionalProperties": {"type": "integer"},
+            },
+            "rules": {"type": "array", "items": {"type": "string"}},
+            "status": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+
+
+def anchor_schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "anchor_schema.json",
+        "title": "Dataset v2 Anchor Catalog Record",
+        "description": "One row of anchors/anchor_manifest.csv: a single anchor configuration and the trajectories/splits that consume it.",
+        "type": "object",
+        "required": ["anchor_id", "anchor_class", "q_anchor", "consuming_trajectory_ids"],
+        "properties": {
+            "anchor_id": {"type": "string", "pattern": "^anchor_(regular|near_limit|near_singular)_[0-9]{2}$"},
+            "anchor_class": {"type": "string", "enum": ANCHOR_CLASS_ENUM},
+            "q_anchor": {
+                "type": "array",
+                "description": "Anchor joint configuration [q1..q7] in radians.",
+                "items": {"type": "number"},
+                "minItems": 7,
+                "maxItems": 7,
+            },
+            "sigma_min": {"type": "number", "minimum": 0},
+            "minimum_limit_margin": {"type": "number"},
+            "consuming_trajectory_ids": {
+                "type": "array",
+                "description": "Every trajectory_id/split that uses this anchor (section G split-isolation visibility).",
+                "items": {"type": "string"},
+            },
+            "source_seed": {"type": "integer"},
+        },
+        "additionalProperties": False,
+    }
+
+
+def tier0_state_schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "tier0_state_schema.json",
+        "title": "Dataset v2 Tier 0 State/Checksum Record",
+        "description": "A single Tier 0 validation state (FK, Jacobian, or singularity) plus its checksum-manifest metadata.",
+        "type": "object",
+        "required": ["state_type", "sample_id", "q_sample", "source_seed"],
+        "properties": {
+            "state_type": {"type": "string", "enum": ["fk", "jacobian", "singularity"]},
+            "sample_id": {"type": "integer", "minimum": 0},
+            "q_sample": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 7,
+                "maxItems": 7,
+            },
+            "source_seed": {"type": "integer"},
+            "sample_count": {"type": "integer", "minimum": 0},
+            "sha256": {"type": "string", "pattern": SHA256_PATTERN},
+        },
+        "additionalProperties": False,
+    }
+
+
+def point_ik_schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "point_ik_schema.json",
+        "title": "Dataset v2 Point-IK Sample",
+        "description": "A single Tier 1 point-IK sample record, extending v1's point_ik_schema.json with split and content-hash fields for anti-leakage checks (spec section K).",
+        "type": "object",
+        "required": [
+            "sample_id",
+            "split",
+            "difficulty_group",
+            "q_initial",
+            "q_target",
+            "target_position",
+            "target_quaternion",
+            "position_distance_m",
+            "orientation_distance_rad",
+            "joint_distance_rad",
+            "initial_sigma_min",
+            "target_sigma_min",
+            "minimum_initial_limit_margin",
+            "minimum_target_limit_margin",
+            "source_seed",
+            "content_hash",
+        ],
+        "properties": {
+            "sample_id": {"type": "string", "pattern": "^pik_(development|validation|frozen_test)_[a-z_]+_[0-9]{5}$"},
+            "split": {"type": "string", "enum": SPLIT_ENUM},
+            "difficulty_group": {"type": "string", "enum": DIFFICULTY_ENUM},
+            "q_initial": {"type": "array", "items": {"type": "number"}, "minItems": 7, "maxItems": 7},
+            "q_target": {"type": "array", "items": {"type": "number"}, "minItems": 7, "maxItems": 7},
+            "target_position": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+            "target_quaternion": _QUATERNION_WXYZ,
+            "position_distance_m": {"type": "number", "minimum": 0},
+            "orientation_distance_rad": {"type": "number", "minimum": 0},
+            "joint_distance_rad": {"type": "number", "minimum": 0},
+            "initial_sigma_min": {"type": "number", "minimum": 0},
+            "target_sigma_min": {"type": "number", "minimum": 0},
+            "minimum_initial_limit_margin": {"type": "number"},
+            "minimum_target_limit_margin": {"type": "number"},
+            "source_seed": {"type": "integer"},
+            "content_hash": {"type": "string", "pattern": SHA256_PATTERN},
+        },
+        "additionalProperties": False,
+    }
+
+
+def trajectory_schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "trajectory_schema.json",
+        "title": "Dataset v2 Trajectory Manifest Record",
+        "description": "One trajectory_manifest.csv row: family, split, orientation mode, dual-representation and arc-length/angular metadata, checksum.",
+        "type": "object",
+        "required": [
+            "trajectory_id",
+            "family",
+            "split",
+            "orientation_mode",
+            "num_canonical_waypoints",
+            "arc_length_m",
+            "cumulative_angular_displacement_rad",
+            "generation_status",
+            "sha256",
+        ],
+        "properties": {
+            "trajectory_id": {"type": "string", "minLength": 1},
+            "family": {"type": "string", "enum": TRAJECTORY_FAMILY_ENUM},
+            "split": {"type": "string", "enum": SPLIT_ENUM},
+            "orientation_mode": {"type": "string", "enum": ORIENTATION_MODE_ENUM},
+            "anchor_id": {"type": "string"},
+            "num_canonical_waypoints": {"type": "integer", "const": 400},
+            "arc_length_m": {"type": "number", "minimum": 0},
+            "cumulative_angular_displacement_rad": {"type": "number", "minimum": 0},
+            "generation_status": {"type": "string", "enum": ["validated", "incomplete"]},
+            "source_seed": {"type": "integer"},
+            "content_hash": {"type": "string", "pattern": SHA256_PATTERN},
+            "sha256": {"type": "string", "pattern": SHA256_PATTERN},
+        },
+        "additionalProperties": False,
+    }
+
+
+def trial_schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "trial_schema.json",
+        "title": "Dataset v2 Trial Manifest Record",
+        "description": "One trials/trial_manifest.csv row: an easy/medium/hard initial-state trial for one trajectory.",
+        "type": "object",
+        "required": ["trial_id", "trajectory_id", "init_class", "q_initial", "source_seed"],
+        "properties": {
+            "trial_id": {"type": "string", "pattern": "^.+_trial_(easy|medium|hard)$"},
+            "trajectory_id": {"type": "string", "minLength": 1},
+            "init_class": {"type": "string", "enum": INIT_CLASS_ENUM},
+            "q_initial": {"type": "array", "items": {"type": "number"}, "minItems": 7, "maxItems": 7},
+            "initial_position_distance_m": {"type": "number", "minimum": 0},
+            "initial_limit_margin": {"type": "number"},
+            "initial_sigma_min": {"type": "number", "minimum": 0},
+            "source_seed": {"type": "integer"},
+        },
+        "additionalProperties": False,
+    }
+
+
+def validation_report_schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "validation_report_schema.json",
+        "title": "Dataset v2 Anti-Leakage / Validation Report",
+        "description": "Post-generation report asserting pairwise disjointness of the section-K anti-leakage identifier sets across development/validation/frozen_test.",
+        "type": "object",
+        "required": ["dimensions_checked", "collisions_found", "pass"],
+        "properties": {
+            "dimensions_checked": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "anchor_id",
+                        "point_ik_sample_id",
+                        "point_ik_content_hash",
+                        "random_path_seed",
+                        "trajectory_id",
+                        "trajectory_content_hash",
+                        "trial_id",
+                    ],
+                },
+            },
+            "collisions_found": {"type": "integer", "minimum": 0},
+            "collision_details": {"type": "array", "items": {"type": "object"}},
+            "pass": {"type": "boolean"},
+        },
+        "additionalProperties": False,
+    }
+
+
+def checksum_manifest_schema() -> dict:
+    file_entry = {
+        "type": "object",
+        "required": ["filename", "sha256", "file_size_bytes"],
+        "properties": {
+            "filename": {
+                "type": "string",
+                "description": "Path relative to the dataset_v2 root (never absolute).",
+                "minLength": 1,
+            },
+            "sha256": {"type": "string", "pattern": SHA256_PATTERN},
+            "file_size_bytes": {"type": "integer", "minimum": 0},
+            "sample_count": {"type": "integer", "minimum": 0},
+        },
+        "additionalProperties": True,
+    }
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "checksum_manifest_schema.json",
+        "title": "Dataset v2 Checksum Manifest",
+        "description": "checksums/CHECKSUM_MANIFEST.json: SHA256 of every generated file, split into source/config fingerprint, generated-data checksum, and release-archive checksum categories (spec section N).",
+        "type": "object",
+        "required": ["categories", "status"],
+        "properties": {
+            "dataset_root_relative": {"type": "boolean"},
+            "categories": {
+                "type": "object",
+                "required": ["source_config_fingerprint", "generated_data_checksum", "release_archive_checksum"],
+                "properties": {
+                    "source_config_fingerprint": {"type": "array", "items": file_entry},
+                    "generated_data_checksum": {"type": "array", "items": file_entry},
+                    "release_archive_checksum": {"type": "array", "items": file_entry},
+                },
+                "additionalProperties": False,
+            },
+            "status": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+
+
+def all_schemas() -> Dict[str, dict]:
+    """Every schema-scaffold file, keyed by its filename under ``schemas/``."""
+    return {
+        "dataset_manifest_schema.json": dataset_manifest_schema(),
+        "generation_config_schema.json": generation_config_schema(),
+        "anchor_schema.json": anchor_schema(),
+        "tier0_state_schema.json": tier0_state_schema(),
+        "point_ik_schema.json": point_ik_schema(),
+        "trajectory_schema.json": trajectory_schema(),
+        "trial_schema.json": trial_schema(),
+        "validation_report_schema.json": validation_report_schema(),
+        "checksum_manifest_schema.json": checksum_manifest_schema(),
+    }
