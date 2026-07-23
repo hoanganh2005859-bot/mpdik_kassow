@@ -107,6 +107,31 @@ def apply_tier0_generation_status(
     return updated
 
 
+def apply_anchor_generation_status(
+    manifest: dict,
+    total_anchors: int,
+    class_counts: dict,
+    split_counts: dict,
+    class_split_counts: dict,
+) -> dict:
+    """Return a copy of ``manifest`` with ``counts.anchors`` updated to the *actual* generated
+    counts (Phase 4). Never mutates dataset-wide ``generated``/``frozen``/``status`` -- anchors
+    being generated does not mean Tier 0-1/3-4 are (see ``apply_tier0_generation_status``).
+    """
+    updated = dict(manifest)
+    counts = dict(updated.get("counts", {}))
+    counts["anchors"] = {
+        **dict(counts.get("anchors", {})),
+        "total": int(total_anchors),
+        "generated": True,
+        "class_counts": dict(class_counts),
+        "split_counts": dict(split_counts),
+        "class_split_counts": {name: dict(value) for name, value in class_split_counts.items()},
+    }
+    updated["counts"] = counts
+    return updated
+
+
 def apply_point_ik_generation_status(
     manifest: dict,
     total_samples: int,

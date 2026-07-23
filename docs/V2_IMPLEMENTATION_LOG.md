@@ -609,3 +609,188 @@ Per `docs/V2_REPO_AUDIT.md`'s recommended order, next is the anchor generator (1
 thresholds are already locked (Phase 2.5) but its **selection procedure** is not yet implemented.
 Anchors are a prerequisite for the core-trajectory phase (120 trajectories, 5 shapes x 2
 orientation modes x 12 anchors) that follows.
+
+## Phase 4 -- Anchor generator, validator, CLI
+
+- **Status**: complete. Anchors only -- no core trajectories, random-challenge trajectories,
+  trials, or DLS evaluation.
+- **Baseline before this phase**: branch `feature/dataset-v2`, commit
+  `6c3d736e4d6c18347300d8a86a529586e6fd3706`, clean working tree, `pytest -q` -> 446 passed,
+  0 failed/skipped/errored.
+
+### Files added/modified
+
+- **New**: `dataset_v2/anchor_generation.py` -- the generator. Draws three sub-pools of
+  candidate joint configurations, all reusing Tier 0's already-verified sampling constructions
+  unchanged (`dataset_v2/tier0_generation.py::_group_random_interior` for a `regular` pool with a
+  range-proportional interior margin -- same rationale as Point-IK/threshold-calibration's generic
+  pool; `_group_mixed_near_limits` for a near-limit-biased pool, whose per-joint independent
+  lower/upper/interior randomization already gives natural controlling-joint diversity;
+  `_build_singularity_candidate_pool` for a singularity-biased pool). Computes real FK/Jacobian
+  covariates for every candidate (position, quaternion wxyz, `sigma_min`/`sigma_max`/
+  `condition_number`/`numerical_rank`/positional manipulability, normalized and absolute-rad
+  joint-limit margin, controlling joint index), then classifies every candidate against Phase
+  2.5's locked thresholds (`near_joint_limit`/`near_singularity`/`moderately_conditioned` from
+  `configs/difficulty_thresholds.json`, never copied to a second location) with the locked
+  priority `near_singular > near_limit > regular`, storing all four diagnostic flags
+  (`is_near_limit`/`is_near_singular`/`is_moderately_conditioned`/`is_regular`) independently of
+  the resolved `primary_class`/assigned `anchor_class`. For `near_limit`/`near_singular`, prefers
+  the "clean" (non-overlapping) eligible subset per spec section 3, falling back to the full
+  overlap-inclusive pool only if the clean subset is smaller than the 3 needed (both counts always
+  recorded in the report); never relaxes a threshold, never duplicates. Selects each class's exact
+  quota via a new deterministic `greedy_farthest_point_select` (max-min diversity over a
+  normalized composite feature vector -- joint-space, workspace position, `so3_log`-based
+  orientation, `sigma_min`, joint-limit margin, plus a controlling-joint one-hot emphasized for
+  `near_limit` -- each feature group divided by `sqrt(dimensionality)` so no group dominates
+  Euclidean distance; ties broken by a seeded permutation, never arbitrary). Assigns splits per
+  class via a further seeded permutation (2/2/2 regular, 1/1/1 near_limit, 1/1/1 near_singular),
+  then asserts no two anchors in *different* splits are near-duplicates (joint-space/Cartesian/
+  orientation tolerances from `configs/anchor_config.json`, never silently relaxed) before writing.
+  Writes `anchors.npz`, `anchor_manifest.csv`, `anchor_generation_report.json` atomically under
+  `<dataset_v2_root>/anchors/`, rejects pre-existing output without `overwrite=True`, and updates
+  `DATASET_MANIFEST.json`'s `counts.anchors` (via new `dataset_v2/manifest.py::
+  apply_anchor_generation_status`) and `checksums/CHECKSUM_MANIFEST.json` after a real
+  (non-dry-run) generation. No DLS call anywhere in this module.
+- **New**: `dataset_v2/anchor_validation.py` -- the independent validator. Recomputes FK, every
+  covariate, all four diagnostic flags, and the anchor's own stored `anchor_class`'s raw
+  eligibility (via `kinematics/`, unchanged) and flags any mismatch; checks exact/class/split/
+  per-class-per-split counts, shapes/dtypes, no object dtype, operational-limit compliance,
+  quaternion normalization, global uniqueness of `anchor_id`/`content_hash`/exact `q`, and
+  split-anti-leakage (no near-duplicate anchor pair spanning two different splits, using the same
+  configured tolerance). Never calls DLS. Returns an `AnchorValidationReport` with a `passed` flag
+  and itemized `reasons`; never raises on a failed check, only on a missing/malformed input file.
+- **New**: `pipelines/run_dataset_v2_anchor_generation.py` -- CLI
+  (`python -m pipelines.run_dataset_v2_anchor_generation --dataset-root PATH`). Supports
+  `--master-seed`, `--overwrite`, `--validate-only`, `--dry-run`, and `--regular-pool-size`/
+  `--near-limit-pool-size`/`--singularity-pool-size` (test/smoke only). Exit codes: `0` success,
+  `1` validation failure, `2` usage/configuration error.
+- **Modified** (extended, not rewritten):
+  - `dataset_v2/config_templates.py::anchor_config()` -- added
+    `classification_priority_highest_first` (`["near_singular", "near_limit", "regular"]`),
+    `split_assignment` (counts-per-class-per-split: 2/2/2 regular, 1/1/1 near_limit, 1/1/1
+    near_singular), `candidate_pool_policy` (three sub-pool size defaults of 5,000 each, plus
+    construction notes pointing at the single-source Tier 0 functions/config rather than copying
+    numbers), `overlap_policy` (clean-preference + fallback rule, documented report fields), the
+    full `diversity_selection_policy` (feature groups, weighting formula, tie-breaking rule), and
+    `near_duplicate_tolerance` (joint-space/position/orientation thresholds). Status updated from
+    `counts_and_thresholds_locked_generation_not_implemented` to
+    `counts_and_thresholds_locked_generation_implemented`; the locked 6/3/3 class counts and the
+    already-locked near_limit/near_singular acceptance thresholds are unchanged.
+  - `dataset_v2/schemas.py::anchor_schema()` -- extended to the full Phase 4 field list (`q`/
+    `position`/`quaternion_wxyz`/`split`/`sigma_max`/`condition_number`/`numerical_rank`/
+    `manipulability`/`minimum_normalized_limit_margin`/`minimum_absolute_limit_margin_rad`/
+    `controlling_joint_index`/all four diagnostic flags/`source_pool`/`content_hash`, replacing
+    the old placeholder `q_anchor`/`consuming_trajectory_ids` fields, which no test referenced).
+  - `dataset_v2/manifest.py` -- added `apply_anchor_generation_status` (mirrors
+    `apply_tier0_generation_status`/`apply_point_ik_generation_status`; never touches the
+    dataset-wide `generated`/`frozen`/`status` flags).
+- **New tests**: `tests/test_dataset_v2_anchor_generation.py` (32 tests: exact 12/6-3-3/4-4-4/
+  2-1-1 counts on a small fixture, determinism at a fixed seed, differing output at a different
+  seed, classification-boundary checks against the config-read thresholds, overlap-report
+  bookkeeping, regular/near_limit/near_singular anchor requirements, controlling-joint
+  recomputation matches the stored value, no exact-duplicate `q`, split anti-leakage (no
+  ID/hash reuse), the greedy farthest-point selector is deterministic and not a plain first-K cut
+  and raises an actionable error when the pool is insufficient, FK/metadata consistency,
+  `allow_pickle=False` loads, schema validation of a representative record, checksum-manifest
+  verification, overwrite protection, dry-run writes nothing, CWD-independence, manifest/
+  checksum-manifest updates, no absolute paths, missing-scaffold rejection, the locked-
+  12/6-3-3/4-4-4/2-1-1 config-resolution integration check, and CLI dry-run/generate/validate/
+  overwrite-rejection flows) and `tests/test_dataset_v2_anchor_validation.py` (10 tests: passes
+  on a clean fixture, and separately detects a wrong total count, a wrong class count, a wrong
+  split assignment, a duplicate anchor_id, a duplicate content_hash, an out-of-limit joint state,
+  an FK/position mismatch, and a hand-corrupted covariate, plus CLI exit-code 0/1 on
+  success/failure). All fixtures use small sub-pools (200 candidates each) for speed; the full
+  locked-pool-size (5,000/sub-pool) generation was run manually (see below), not as part of the
+  regular suite.
+
+### Seed policy actually used
+
+`master_seed` -> `derive_seed(master_seed, component_tags["anchors"]=30)` = anchors component
+seed -> `derive_seed(anchors_component_seed, {regular_pool:1, near_limit_biased_pool:2,
+singularity_biased_pool:3})` = per-sub-pool seed (the RNG that draws that sub-pool's candidates)
+-> per anchor class, `derive_seed(anchors_component_seed, 10, class_id)` = diversity-selection seed
+and `derive_seed(anchors_component_seed, 20, class_id)` = split-assignment seed. Every seed used is
+recorded verbatim in `anchors/anchor_generation_report.json`, so any seed is traceable back to
+`(master_seed, tag_path)` per spec section E. Verified byte-identical NPZ output across two
+independent scaffold+generate runs at the same seed, and differing output at a different seed.
+
+### Thresholds, pools, and counts (full locked run)
+
+Reproducibility command used for the full run below:
+`python -m pipelines.run_dataset_v2_anchor_generation --dataset-root <temp> --master-seed 42`
+
+- `near_joint_limit_threshold = 0.024991237796029034`, `near_singularity_threshold = 0.03`,
+  `moderately_conditioned_upper_bound = 0.09` -- all read from `configs/difficulty_thresholds.json`
+  (Phase 2.5 locked), never copied into a second constant.
+- Candidate pool sizes (locked defaults): `regular_pool = 5000`, `near_limit_biased_pool = 5000`,
+  `singularity_biased_pool = 5000`.
+- Clean/overlap candidate counts from this run: `regular` 4,250 eligible (no overlap axis);
+  `near_limit` 4,658 clean / 855 overlapping (5,513 total eligible) -- selected from the clean
+  subset; `near_singular` 2,145 clean / 855 overlapping (3,000 total eligible) -- selected from the
+  clean subset. `near_duplicate_pairs = 0`.
+- Exact counts: 12 total, 6/3/3 by class, 4/4/4 by split, 2/1/1 per class per split.
+
+### Full generation (manual, temporary directory, not committed)
+
+Ran the CLI against a scaffold in the OS temp directory (outside the repo, deleted afterward),
+`--master-seed 42`, no overrides (locked default pool sizes):
+
+- Generation: **~6.7 s** wall-clock -> wrote exactly 12 anchors, 6/3/3 by class, 4/4/4 by split,
+  2/1/1 per class per split.
+- Validation: **~1.0 s** wall-clock (`... --validate-only`) -> `total=12 passed=True`.
+- Controlling-joint histogram: `regular` spread across 5 of 7 joints (0,1,2,4,5); `near_limit`
+  spread across 3 distinct joints (0,1,2) -- no single joint dominates; `near_singular` spread
+  across joints 2 and 3.
+- Workspace bounding box (12 anchors): x in [-0.725, 0.920] m, y in [-0.866, 0.850] m, z in
+  [-0.389, 1.092] m.
+- Selected `sigma_min` ranges: `regular` [0.0905, 0.2518], `near_limit` [0.0625, 0.2101],
+  `near_singular` [0.0030, 0.0282] -- all consistent with their class thresholds.
+- `DATASET_MANIFEST.json`'s `counts.anchors` updated with `generated: true` and the exact
+  class/split/class-split counts above; dataset-wide `generated`/`frozen` flags remain `false`.
+- No NPZ/CSV/generated JSON from this run was added to the repository or Git; the temp directory
+  was deleted after inspection.
+
+### Tests
+
+- Targeted: `pytest tests/test_dataset_v2_anchor_generation.py
+  tests/test_dataset_v2_anchor_validation.py -q` -> 46 passed (20 s).
+- Point-IK v2 regression: `pytest tests/test_dataset_v2_point_ik_generation.py
+  tests/test_dataset_v2_point_ik_validation.py -q` -> 40 passed.
+- Threshold calibration + Tier 0 v2 regression: `pytest
+  tests/test_dataset_v2_threshold_calibration.py tests/test_dataset_v2_scaffold.py
+  tests/test_dataset_root_resolution.py tests/test_pipeline_tier0.py
+  tests/test_dataset_v2_tier0_generation.py tests/test_dataset_v2_tier0_validation.py -q` ->
+  87 passed.
+- Dataset v1 backward compatibility: `pytest tests/test_pipeline_smoke.py
+  tests/test_point_dataset.py tests/test_trajectory_files.py -q` -> 130 passed, no regression.
+- Full suite: `pytest -q` -> **492 passed, 0 failed, 0 skipped, 0 errors** (446 baseline + 46 new).
+
+### Blockers
+
+- None.
+
+### Confirmations
+
+- Dataset v1: **not modified**. `git status --short`/`git diff --name-only` after this phase show
+  only `dataset_v2/config_templates.py`, `dataset_v2/manifest.py`, and `dataset_v2/schemas.py`
+  modified (all Phase 1-3 files, extended additively) and `dataset_v2/anchor_generation.py`,
+  `dataset_v2/anchor_validation.py`, `pipelines/run_dataset_v2_anchor_generation.py`,
+  `tests/test_dataset_v2_anchor_generation.py`, `tests/test_dataset_v2_anchor_validation.py` as
+  new, untracked files. No file under `assets/`, `benchmarks/`, `trajectories/`, `configs/`,
+  `schemas/`, `kinematics/`, `algorithms/`, root `DATASET_MANIFEST.json`, or root `VERSION` was
+  touched.
+- Official Dataset v2 anchor data: generated and validated in a temporary directory (see above) to
+  confirm the locked counts/thresholds/runtime are real, but **not** committed to the repository --
+  no NPZ/CSV/generated JSON from this phase is committed data.
+- DLS was never called anywhere in this phase's code (generator or validator); anchor selection
+  used only real computed FK/Jacobian/joint-limit quantities; `frozen_test` anchors were generated
+  and integrity-validated but never used to tune thresholds or selection weights.
+
+### Recommended Phase 5
+
+Per `docs/V2_REPO_AUDIT.md`'s recommended order, next is the core trajectory generator (120
+trajectories = 5 shapes x 2 orientation modes x 12 anchors), producing both a canonical
+(400-waypoint) and high-resolution source representation per trajectory plus arc-length/
+cumulative-angular-displacement metadata, reusing `generators/_trajectory_common.py`'s quintic
+time-scaling and sequential-DLS reachability validation and `generators/generate_orientation_profile.py`'s
+SLERP-based variable-orientation profile (both unchanged) against the anchors this phase produced.

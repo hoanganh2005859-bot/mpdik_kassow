@@ -317,6 +317,9 @@ def difficulty_threshold_config() -> dict:
     }
 
 
+ANCHOR_CLASS_PRIORITY_HIGHEST_FIRST = ["near_singular", "near_limit", "regular"]
+
+
 def anchor_config() -> dict:
     return {
         "classes": {"regular": 6, "near_limit": 3, "near_singular": 3},
@@ -348,7 +351,106 @@ def anchor_config() -> dict:
                 ),
             },
         },
-        "status": "counts_and_thresholds_locked_generation_not_implemented",
+        "classification_priority_highest_first": list(ANCHOR_CLASS_PRIORITY_HIGHEST_FIRST),
+        "classification_priority_note": (
+            "A candidate satisfying more than one class's eligibility criteria (e.g. both "
+            "near_singular and near_limit) is reported with its primary_class set to the "
+            "highest-priority eligible class; both diagnostic flags (is_near_limit/"
+            "is_near_singular) are always stored regardless of the primary_class assignment."
+        ),
+        "split_assignment": {
+            "splits": list(SPLITS),
+            "counts_per_class_per_split": {
+                "regular": {"development": 2, "validation": 2, "frozen_test": 2},
+                "near_limit": {"development": 1, "validation": 1, "frozen_test": 1},
+                "near_singular": {"development": 1, "validation": 1, "frozen_test": 1},
+            },
+            "method": (
+                "each class's diversity-selected anchors are assigned to splits via a seeded "
+                "deterministic permutation, sliced into the per-split counts above -- never a "
+                "post-hoc random split that could unbalance a class across splits."
+            ),
+        },
+        "candidate_pool_policy": {
+            "regular_pool_size_default": 5000,
+            "near_limit_biased_pool_size_default": 5000,
+            "singularity_biased_pool_size_default": 5000,
+            "regular_interior_margin_fraction": 0.01,
+            "regular_pool_note": (
+                "uniform-interior pool (dataset_v2/tier0_generation.py::_group_random_interior), "
+                "margin proportional to each joint's own half-range (1% of half-range), same "
+                "rationale as Point-IK/threshold-calibration's generic pool -- avoids the "
+                "joint_2/joint_4 margin-sampling bias documented in "
+                "docs/V2_THRESHOLD_CALIBRATION.md section 1."
+            ),
+            "near_limit_biased_pool_note": (
+                "reuses dataset_v2/tier0_generation.py::_group_mixed_near_limits unchanged "
+                "(each joint independently randomized near-lower/near-upper/interior, giving "
+                "natural controlling-joint diversity); margin/band/interior_margin_rad sourced "
+                "from configs/tier0_config.json:sampling_policy (single source, never copied)."
+            ),
+            "singularity_biased_pool_note": (
+                "reuses dataset_v2/tier0_generation.py::_build_singularity_candidate_pool "
+                "unchanged (uniform + elbow(q4~0) + wrist(q6~0) biased subsets); "
+                "interior_margin_rad sourced from configs/tier0_config.json:sampling_policy. Bias "
+                "only proposes candidates -- classification always uses the real computed "
+                "sigma_min, never the bias label."
+            ),
+        },
+        "overlap_policy": {
+            "near_limit_preference": (
+                "prefer candidates with is_near_singular=false (clean) when selecting the 3 "
+                "near_limit anchors; fall back to the full near_limit-eligible pool (including "
+                "overlap with near_singular) only if the clean subset has fewer than 3 "
+                "candidates; never relaxes the near_joint_limit threshold, never duplicates."
+            ),
+            "near_singular_preference": (
+                "prefer candidates whose normalized joint-limit margin is above the "
+                "near_joint_limit threshold (clean, i.e. not also near_limit) when selecting the "
+                "3 near_singular anchors; same fallback rule as near_limit."
+            ),
+            "report_fields": ["clean_count", "overlap_count", "selected_source"],
+        },
+        "diversity_selection_policy": {
+            "method": "deterministic greedy farthest-point (max-min) selection over a normalized composite feature vector",
+            "feature_groups": [
+                "joint_space (7d, min-max normalized by operational range)",
+                "workspace_position (3d, min-max normalized over the eligible candidate pool's bounding box)",
+                "orientation_log_vector (3d, so3_log(R)/pi)",
+                "sigma_min (1d, min-max normalized over the eligible pool)",
+                "normalized_joint_limit_margin (1d, min-max normalized over the eligible pool)",
+                "controlling_joint_one_hot (7d, near_limit class only, extra-weighted to actively spread controlling joints)",
+            ],
+            "weighting": (
+                "each feature group's sub-vector is divided by sqrt(its own dimensionality) "
+                "before concatenation, so groups with more raw dimensions do not dominate "
+                "Euclidean distance; the near_limit class's controlling_joint_one_hot group is "
+                "additionally scaled by controlling_joint_emphasis."
+            ),
+            "controlling_joint_emphasis": 2.0,
+            "initial_point_selection": (
+                "the first selected point is the candidate farthest (in normalized feature "
+                "space) from the eligible pool's centroid; ties broken by a seeded permutation "
+                "rank (deterministic, not arbitrary)."
+            ),
+            "tie_breaking": (
+                "at every selection step, ties in the max-min diversity score are broken by the "
+                "same seeded permutation rank derived from that class's selection seed -- never "
+                "unseeded/arbitrary."
+            ),
+        },
+        "near_duplicate_tolerance": {
+            "joint_space_rad": 0.05,
+            "position_m": 0.005,
+            "orientation_rad": 0.01,
+            "policy": (
+                "if any two selected anchors (regardless of class) fall within all three "
+                "tolerances simultaneously and are assigned to different splits, generation "
+                "fails loudly (spec section 6 anti-leakage); the tolerance itself is never "
+                "silently relaxed."
+            ),
+        },
+        "status": "counts_and_thresholds_locked_generation_implemented",
     }
 
 
