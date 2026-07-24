@@ -194,7 +194,13 @@ Rules tied to this layout **[LOCKED]**:
   a way that leaks anchor identity as a shortcut signal (i.e. document, per anchor, every
   trajectory/split that consumes it, and keep that mapping visible in `anchor_manifest.csv`).
 - **[LOCKED] Acceptance criteria** (numeric thresholds locked by Phase 2.5 calibration —
-  `docs/V2_THRESHOLD_CALIBRATION.md`, `configs/difficulty_thresholds.json`):
+  `docs/V2_THRESHOLD_CALIBRATION.md`, `configs/difficulty_thresholds.json`).
+  > **Amended by Phase 5.2 (section H.2):** the per-class criteria below are now additionally
+  > required to be **mutually exclusive** — `near_limit` also requires `sigma_min > 0.09`, and
+  > `near_singular` also requires `normalized_joint_limit_margin > 0.024991237796029034`. The
+  > threshold *values* here are unchanged; only the anchor-selection eligibility is tightened so no
+  > anchor can be both near-limit and near-singular. See section H.2 for the rationale and the
+  > machine-readable predicates.
   - `regular`: `sigma_min` comfortably above the singularity threshold *and* joint-limit margin
     comfortably interior — this reuses v1's `select_anchor` predicate as-is. Calibrated as
     `sigma_min > 0.09` (`moderately_conditioned_upper_bound`) **and**
@@ -232,6 +238,215 @@ Rules tied to this layout **[LOCKED]**:
 - Closure policy: closed-path shapes (e.g. `circle`, `figure8`) return to their starting pose;
   open-path shapes (`line`, `helix`, `free_form` as applicable) do not. This mirrors v1's
   `closed_path` flag and `orientation_phase_for_shape` handling.
+- **[PROVISIONAL] (Phase 5 implementation)** Source resolution / canonical resampling / reachability
+  policy, filling gaps this section left open without changing the locked 120/400/48,000 counts:
+  - Source resolution: `configs/trajectory_config.json:source_waypoint_count_nominal` (2001,
+    provisional, must stay `> 400`), evaluated at fine `tau`-uniform time steps through the same
+    quintic time scaling as the canonical grid.
+  - Canonical resampling: arc-length-uniform (not time-uniform) selection of 400 points from the
+    source path; position linearly interpolated between the two bracketing source samples;
+    orientation resampled via SO(3) geodesic SLERP between the same two bracketing source
+    quaternions (`kinematics/rotation_utils.py::so3_log`/`so3_exp`), never linear-interpolate-
+    then-normalize; endpoints preserved exactly (arc length 0 and total map to the source's first
+    and last samples respectively).
+  - `free_form` shape: a deterministic seeded cubic spline (`scipy.interpolate.CubicSpline`,
+    chord-length-parameterized) through 5 control points (the anchor position, 3 seeded interior
+    offsets, and a seeded endpoint) — open path, control points stored alongside the source
+    representation for reproducibility.
+  - Reachability validation scope: superseded by section H.1 below (Phase 5.1 validates *both* the
+    canonical and the source path).
+
+### H.1 Strict generation reachability, geometry search, and scale gate [LOCKED by Phase 5.1]
+
+**Motivation.** Phase 5 accepted a waypoint as "reachable" whenever
+`kinematics/dls_solver.py::solve_dls_until_converged`, driven by Dataset v1's
+`configs/dls_config.json`, returned `success=True` — i.e. within that DLS baseline's *own*
+evaluation thresholds (0.006 m / 10.0 deg), with no independent check. A dataset whose
+reachability is defined by the very solver it will later benchmark cannot measure that solver, and
+the reported "max position error = 0.006 m" was an artifact of that threshold rather than a real
+kinematic limit. Phase 5.1 removes the circularity.
+
+- **[LOCKED] Independent-FK acceptance.** A target pose counts as reachable only if a reference
+  configuration `q_reference` exists such that (a) `q_reference` lies within operational joint
+  limits and (b) an *independently recomputed* `FK(q_reference)` reproduces the target position and
+  orientation within Dataset v2's own tolerances. The numerical IK engine's `success` flag is never
+  sufficient evidence.
+- **[LOCKED] Generation tolerances** (`configs/generation_reachability_config.json`, never read
+  from `configs/dls_config.json`): position `<= 1e-4 m`, orientation `<= 0.01 deg`. These are 60x
+  and 1000x tighter than the DLS baseline's success thresholds respectively. Changing the DLS
+  baseline's thresholds must not change which trajectories the generator accepts.
+- **[LOCKED] Separation from evaluation.** The DLS implementation may be reused as a generation
+  *numerical IK engine* (with Dataset v2's own solver settings, refinement rounds, and
+  deterministic restarts), but nothing it produces at generation time is a DLS baseline evaluation
+  result, and trajectories are never selected or rejected using DLS iteration count, runtime, or
+  coarse-evaluation success.
+- **[LOCKED] Both paths validated.** Every canonical waypoint *and* every high-resolution source
+  waypoint carries a `q_reference`, a reachability status, and position/orientation reconstruction
+  errors. No waypoint is ever skipped, dropped, or silently replaced.
+- **[LOCKED] Geometry-alternative search precedes scale reduction.** For each
+  `(anchor, shape, orientation_mode)`, a deterministic set of geometry alternatives
+  (`configs/trajectory_config.json:geometry_alternatives`) is searched before any scale reduction.
+  The largest strictly-reachable scale wins. Alternatives attempted and rejection reasons are
+  recorded per trajectory. The search never consults evaluation or frozen-test results.
+  *(Alternative set and selection/tie-break rule superseded by section H.4.)*
+
+### H.4 Generic geometry-alternative set and selection policy [LOCKED by Phase 5.3]
+
+**Motivation.** Phase 5.1 gave `line` six signed directions and `helix` six axis/travel-sign
+combinations, but left `circle`/`figure8` with only a plane basis (one traversal sense, one start
+phase, fixed lobe signs, no major/minor axis swap) and `free_form` with four templates from a
+single generation rule. Those three shapes therefore had no escape route when an anchor's limiting
+joint blocked their one enumerated traversal — and Phase 5.2's *development/validation* failures
+were exactly `figure8` and `free_form`, with none on `line`/`helix`. Phase 5.3 completes the
+geometric symmetry generically; it is applied identically to every split and changes no threshold,
+gate, tolerance, count or nominal geometry.
+
+- **[LOCKED] Alternative set** (22 → 56 total):
+  - `line`: 6 — signed local axes (unchanged).
+  - `circle`: **12** = 3 plane bases × 2 traversal directions (`ccw`/`cw`) × 2 start phases
+    (`0`, `pi`). The centre is `p0 - r*(cos(phi)*u + sigma*sin(phi)*v)` so the anchor pose is
+    exactly the first waypoint for every combination.
+  - `figure8`: **24** = 3 plane bases × 4 amplitude-sign pairs × 2 major/minor axis swaps. The four
+    sign pairs cover both lobe handedness *and* traversal reversal, because `s -> 1-s` maps exactly
+    to `(-sa, -sb)`; reversal is therefore inside the set and is not enumerated twice. `axis_swap`
+    exchanges which basis axis carries the major amplitude — the nominal amplitudes 0.05/0.03 m are
+    unchanged, only their assignment.
+  - `helix`: 6 — axis bases × travel-direction signs (unchanged).
+  - `free_form`: **8** locked templates spanning six departure directions (the anchor's signed
+    local axes, giving horizontal/vertical/mixed workspace variants) plus two mirrored variants
+    whose lateral offsets are reflected. Every template is a smooth cubic spline through the
+    configured control points, starts exactly at the anchor pose, and stays inside the same nominal
+    envelope and scale policy.
+  - No two alternatives of a shape produce byte-identical geometry (asserted by test).
+- **[LOCKED] Canonical alternative IDs.** Every alternative carries a stable, lexically-orderable
+  `alternative_id` plus structured metadata (`plane_basis_id`, `traversal_direction`, `handedness`,
+  `phase_id`, `axis_swap`, `template_id`, `departure_axis`, `mirror`), all recorded in the manifest
+  and the geometry-search report — never only as summary text.
+- **[LOCKED] Orientation consistency.** For `circle` and `figure8` the variable-orientation
+  rotation vector is multiplied by the alternative's traversal/handedness sign, so the orientation
+  profile follows the path's traversal sense.
+- **[LOCKED] Selection and tie-break** (`configs/trajectory_config.json:
+  alternative_selection_policy`): for each alternative, walk the scale schedule from 1.0 downward
+  (never below the 0.50 gate) and record the largest scale at which it passes strict reachability;
+  then select the alternative with the **largest accepted scale**. The search never stops at the
+  first alternative that clears the gate — an alternative is abandoned early only when its
+  remaining schedule can no longer beat the best scale found so far, which cannot change the
+  winner. Ties are broken, in order, by: smallest strict position reconstruction error; fewest
+  refinement/restart attempts (diagnostic only); `alternative_id` lexical order. DLS baseline
+  success, solver iteration count, solver runtime and frozen-test results are all forbidden as
+  selection signals.
+- **[LOCKED by Phase 5.2] Minimum-scale gate.**
+  `configs/trajectory_config.json:minimum_scale_gate` locks
+  `minimum_core_accepted_scale = 0.50`, `minimum_scale_status: "locked"`, `enforced: true`,
+  rationale *"Preserve at least half of nominal core trajectory geometry"*, with diagnostic bands
+  `[1.0, 0.75, 0.5, 0.25]`. Every accepted core trajectory must satisfy `accepted_scale >= 0.50`.
+  This is a **hard failure**, never a warning: the scale ladder in the geometry search is floored
+  at the gate, so a trajectory that cannot reach 0.50 fails generation outright rather than being
+  written below it, and the validator independently fails any on-disk trajectory below it. The
+  gate is never relaxed to make a run pass, no trajectory is ever skipped to satisfy it, and the
+  locked counts (12 anchors, 120 trajectories, 48,000 canonical poses) never change. Nominal
+  geometry is unchanged (line 0.12 m, circle r = 0.045 m, figure-8 0.05/0.03 m, helix r/h =
+  0.04/0.08 m) — the gate constrains the scale *factor* applied to that geometry, not the geometry.
+
+### H.2 Anchor class isolation [LOCKED by Phase 5.2]
+
+**Motivation.** Phase 5.1's anchor acceptance predicates allowed an anchor to satisfy more than one
+class's raw criteria, with a "prefer clean, fall back to overlapping" preference. That admitted
+`anchor_near_limit_02`, which was simultaneously near a joint limit (margin 0.00824) *and*
+near-singular (`sigma_min` 0.06254). Its two **closed** shapes could only be certified at scale
+0.1209 (circle) and 0.1969 (figure-8) — a ~5 mm circle — because a closed planar loop cannot escape
+a doubly-constrained neighbourhood the way an open path can. The confound, not the geometry, was
+the defect.
+
+- **[LOCKED] Anchor classes are mutually exclusive by construction.** The anchor-selection
+  eligibility predicates (`configs/anchor_config.json:class_eligibility_predicates`,
+  `anchor_class_isolation_status: "locked"`) are:
+  - `regular`: `sigma_min > 0.09` **and** `normalized_joint_limit_margin > 0.024991237796029034`.
+  - `near_limit`: `normalized_joint_limit_margin <= 0.024991237796029034` **and**
+    `sigma_min > 0.09` **and** `is_near_singular == false`.
+  - `near_singular`: `sigma_min <= 0.03` **and**
+    `normalized_joint_limit_margin > 0.024991237796029034` **and** `is_near_limit == false`.
+  The `0.09` floor reuses the already-calibrated `moderately_conditioned` upper bound rather than
+  introducing a new number.
+- **[LOCKED] Scope.** These predicates govern **anchor selection only**. The global difficulty-group
+  definitions in `configs/difficulty_thresholds.json`, the Point-IK difficulty thresholds, and the
+  Point-IK classification priority (`near_singularity` > `near_joint_limit` >
+  `large_orientation_change` > `far_target` > `medium_target` > `near_target`) are all unchanged.
+  The four diagnostic flags (`is_near_limit`/`is_near_singular`/`is_moderately_conditioned`/
+  `is_regular`) continue to be computed independently from the global definitions for every
+  candidate and are stored regardless of the selected class.
+- **[LOCKED] No fallback.** There is no overlap fallback. A class with fewer eligible candidates
+  than its quota is a hard failure reporting the candidate-availability breakdown; thresholds are
+  never relaxed and anchors are never duplicated.
+
+### H.3 Frozen-test seed reset [LOCKED by Phase 5.2]
+
+Phase 5 and Phase 5.1 generated `frozen_test` trajectories into temporary roots that were inspected
+while generator policy was still being designed (anchor predicate, geometry-alternative search,
+strict reachability tolerance, minimum-scale gate were all chosen with that data visible). Under
+the frozen-test protocol in section K those trajectories are burned.
+
+- `configs/seed_policy.json:frozen_core_seed_revision = 3` (Phase 5.3). Revision 1 is recorded
+  `burned_not_shippable` (observed during Phase 5/5.1 policy design); revision 2 is recorded
+  `burned_not_shippable` with reason *"geometry alternative policy expanded after pre-freeze
+  validation"*; revision 3 is `active`. Regenerated `frozen_test` data may only be
+  integrity/strict-reachability/checksum/count validated — it is never used to tune the alternative
+  list, thresholds, scale gate, anchors or tolerances.
+- `frozen_test` anchor split assignment and `frozen_test` core-trajectory path seeds and free-form
+  templates mix in the revision; `development`/`validation` keep their existing seed namespace.
+  Because anchor split membership is drawn from a single per-class permutation with exact 2/1/1
+  quotas, frozen membership is the complement of development+validation, so bumping the revision
+  necessarily re-permutes all three splits — with exact quotas there is no way to redraw frozen
+  membership while holding the others fixed. This is acceptable here because Phase 5.2 regenerates
+  every anchor and every trajectory anyway.
+- Regenerated `frozen_test` data may only be integrity-validated, reachability-validated,
+  checksummed and count-verified. It must never be used to tune the anchor predicate, geometry
+  alternatives, minimum scale, or reachability tolerance.
+
+### H.5 Deterministic seed derivation and feasibility-aware anchor selection [LOCKED by Phase 5.4]
+
+**Deterministic seed derivation.** Dataset v2 derives every seed through
+`dataset_v2/seeds.py::derive_seed` (algorithm id `dataset_v2/seed/sha256/v1`): SHA-256 over a
+canonical byte encoding of `(base_seed, *tags)`, reduced with pure Python integer arithmetic. No
+NumPy type participates, so a derived seed is identical across NumPy versions, Python versions and
+platforms. This replaces Dataset v1's `generators/_common.py::derive_seed`, whose closing
+`np.uint64 % int` promotes to `float64` on NumPy 1.x (lossy above 2**53) and stays exact on NumPy
+2.x, making it NumPy-version-dependent. Dataset v1's function is left untouched (v1 is an immutable
+baseline). The dataset root records `seed_algorithm_id`, and the frozen-test revision advanced to
+**4** because revision 3 was generated before this fix (revisions 1-3 are all
+`burned_not_shippable`; exactly one revision is `active`).
+
+**Feasibility-aware anchor selection.** An anchor's class predicate does not guarantee its
+neighbourhood can support the locked core geometry; different seed realizations produced 0, 2 and 4
+below-gate core trajectories purely from which anchors were drawn. A [LOCKED] feasibility screen
+(`configs/anchor_config.json:feasibility_screening`, status `locked`) makes 120/120 a property of
+the policy:
+
+- **[LOCKED] All-ten requirement.** A candidate may enter the catalog only if **all ten** locked
+  `(shape, orientation_mode)` combinations reach `accepted_scale >= minimum_core_accepted_scale`
+  (0.50). Partial feasibility is never accepted.
+- **[LOCKED] Two-stage selection.** Stage A screens eligible candidates in deterministic
+  greedy-farthest-point order and keeps only those passing 10/10; Stage B runs the existing
+  diversity selection over the feasible subset only. A rejected candidate is replaced from the
+  **same** eligible class pool -- classes never mix, no combination is skipped, no random retry.
+  The catalog stays 6 regular / 3 near_limit / 3 near_singular, 2/1/1 per split.
+- **[PROVISIONAL] Staged probe.** The screen runs at a coarse canonical resolution and tests the
+  gate rung (smallest scheduled scale `>= 0.50`) -- the cheapest place to confirm feasibility,
+  and sound because the generator's later scale-maximization can only exceed a gate-rung success.
+  A coarse pass is never an acceptance: the selected anchor's trajectories are still generated and
+  validated at full 400-waypoint / full-source resolution, and the independent core-trajectory
+  validator re-verifies the final 120 without trusting the screen.
+- **[LOCKED] Evidence and validation.** Each anchor stores per-anchor proof that all ten
+  combinations passed at a verified scale `>= 0.50`; the anchor validator fails on missing
+  evidence, fewer than ten combinations, a below-gate verified scale, or a geometry/reachability
+  config-fingerprint mismatch. The feasibility cache key is content-only (q, model fingerprint,
+  geometry/reachability config fingerprints, seed algorithm id, probe resolution) -- never a path
+  or timestamp -- and is never written into the dataset root.
+
+Nothing else changes: the class predicates, near-limit/near-singular/regular thresholds, the 0.50
+gate, the 1e-4 m / 0.01 deg reachability tolerances, the nominal geometry and all locked counts are
+untouched. Feasibility screening only *removes* candidates that would have produced a below-gate
+trajectory.
 
 ## I. Random challenge policy [LOCKED counts, PROVISIONAL generation policy]
 

@@ -118,7 +118,7 @@ def test_manifest_counts_match_locked_spec(v2_root):
 def test_configs_all_parse_as_json(v2_root):
     paths = create_dataset_v2_scaffold(v2_root, master_seed=MASTER_SEED)
     config_files = sorted(paths.configs_dir.glob("*.json"))
-    assert len(config_files) == 12
+    assert len(config_files) == 13
     for path in config_files:
         json.loads(path.read_text(encoding="utf-8"))  # must not raise
 

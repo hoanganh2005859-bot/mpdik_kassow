@@ -132,6 +132,35 @@ def apply_anchor_generation_status(
     return updated
 
 
+def apply_core_trajectory_generation_status(
+    manifest: dict,
+    total_trajectories: int,
+    split_counts: dict,
+    shape_counts: dict,
+    orientation_counts: dict,
+    canonical_waypoints_per_trajectory: int,
+) -> dict:
+    """Return a copy of ``manifest`` with ``counts.core_trajectories`` updated to the *actual*
+    generated counts (Phase 5). Never mutates dataset-wide ``generated``/``frozen``/``status`` --
+    core trajectories being generated does not mean Tier 0-1/anchors/random-challenge/trials are
+    (see ``apply_tier0_generation_status``).
+    """
+    updated = dict(manifest)
+    counts = dict(updated.get("counts", {}))
+    counts["core_trajectories"] = {
+        **dict(counts.get("core_trajectories", {})),
+        "total": int(total_trajectories),
+        "generated": True,
+        "split_counts": dict(split_counts),
+        "shape_counts": dict(shape_counts),
+        "orientation_counts": dict(orientation_counts),
+        "canonical_waypoints_per_trajectory": int(canonical_waypoints_per_trajectory),
+        "canonical_poses_total": int(total_trajectories) * int(canonical_waypoints_per_trajectory),
+    }
+    updated["counts"] = counts
+    return updated
+
+
 def apply_point_ik_generation_status(
     manifest: dict,
     total_samples: int,

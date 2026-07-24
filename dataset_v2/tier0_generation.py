@@ -25,7 +25,7 @@ from dataset_v2.checksums import build_checksum_manifest
 from dataset_v2.config_templates import DATASET_SCHEMA_VERSION, DATASET_VERSION
 from dataset_v2.locator import DatasetV2Paths, relative_to_dataset_v2_root, require_dataset_v2_root
 from dataset_v2.manifest import apply_tier0_generation_status
-from generators._common import derive_seed
+from dataset_v2.seeds import derive_seed
 from kinematics.forward_kinematics import forward_kinematics
 from kinematics.jacobian import geometric_jacobian_world
 from kinematics.joint_limit_utils import minimum_joint_limit_margin

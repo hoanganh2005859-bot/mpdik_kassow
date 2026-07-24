@@ -151,15 +151,25 @@ def test_classification_boundaries(v2_root):
     assert np.all(arrays["sigma_min"][near_singular_mask] <= near_singularity_threshold)
 
 
-def test_overlap_priority_near_singular_over_near_limit(v2_root):
+def test_class_selection_uses_isolated_pool_without_overlap_fallback(v2_root):
+    """Phase 5.2 replaced the Phase 4 'prefer clean, fall back to overlapping' policy with
+    mutually-exclusive class predicates, so no selection may ever come from an overlap fallback."""
     result = _generate_small(v2_root)
-    overlap = result.report["overlap_report_by_class"]
-    # near_limit's clean subset excludes anything eligible as near_singular (priority resolves
-    # overlap toward near_singular); the report must expose this bookkeeping.
-    assert "clean_count" in overlap["near_limit"]
-    assert "overlap_count" in overlap["near_limit"]
-    assert overlap["near_limit"]["selected_source"] in ("clean", "overlap_fallback")
-    assert overlap["near_singular"]["selected_source"] in ("clean", "overlap_fallback")
+    selection = result.report["selection_report_by_class"]
+    assert result.report["anchor_class_isolation_status"] == "locked"
+    for class_name in ("regular", "near_limit", "near_singular"):
+        # Phase 5.4 narrowed the source further: selection now draws from the FEASIBLE subset of
+        # the isolated eligible pool. Either label is a no-overlap-fallback source; the invariant
+        # under test (never an overlap fallback) is unchanged.
+        assert selection[class_name]["selected_source"] in (
+            "isolated_eligible_pool",
+            "feasible_subset_of_isolated_eligible_pool",
+        )
+        assert selection[class_name]["overlap_fallback_used"] is False
+        assert selection[class_name]["eligible_count"] >= selection[class_name]["selected_count"]
+    availability = result.report["candidate_availability"]
+    assert availability["eligible_near_limit_count"] >= 3
+    assert availability["eligible_near_singular_count"] >= 3
 
 
 def test_regular_anchor_requirements(v2_root):

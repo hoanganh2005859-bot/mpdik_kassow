@@ -15,6 +15,7 @@ controlling-joint one-hot for the near_limit class) -- never a plain "first K af
 """
 
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,7 +38,7 @@ from dataset_v2.tier0_generation import (
     _group_mixed_near_limits,
     _group_random_interior,
 )
-from generators._common import derive_seed
+from dataset_v2.seeds import derive_seed
 from kinematics.forward_kinematics import forward_kinematics
 from kinematics.jacobian import geometric_jacobian_world
 from kinematics.joint_limit_utils import normalized_joint_limit_margin
@@ -84,6 +85,8 @@ class AnchorGenerationSettings:
     near_joint_limit_threshold: float
     near_singularity_threshold: float
     moderately_conditioned_upper_bound: float
+    near_limit_min_sigma_min: float
+    frozen_core_seed_revision: int
     controlling_joint_emphasis: float
     near_duplicate_joint_space_rad: float
     near_duplicate_position_m: float
@@ -112,6 +115,14 @@ def load_anchor_generation_settings(
     anchor_config = load_json_config(paths.configs_dir / "anchor_config.json")
     tier0_config = load_json_config(paths.configs_dir / "tier0_config.json")
     thresholds = load_json_config(paths.configs_dir / "difficulty_thresholds.json")
+    seed_policy = load_json_config(paths.configs_dir / "seed_policy.json")
+
+    isolation = anchor_config["class_eligibility_predicates"]
+    if anchor_config.get("anchor_class_isolation_status") != "locked":
+        raise ValueError(
+            "configs/anchor_config.json:anchor_class_isolation_status must be 'locked' "
+            "(Phase 5.2 requires mutually-exclusive anchor classes)"
+        )
 
     pool_policy = anchor_config["candidate_pool_policy"]
     tier0_policy = tier0_config["sampling_policy"]
@@ -134,6 +145,8 @@ def load_anchor_generation_settings(
         near_joint_limit_threshold=float(thresholds["near_joint_limit"]["threshold_normalized"]),
         near_singularity_threshold=float(thresholds["near_singularity"]["threshold_sigma_min"]),
         moderately_conditioned_upper_bound=float(thresholds["moderately_conditioned"]["upper_bound_sigma_min"]),
+        near_limit_min_sigma_min=float(isolation["near_limit"]["min_sigma_min_exclusive"]),
+        frozen_core_seed_revision=int(seed_policy["frozen_core_seed_revision"]),
         controlling_joint_emphasis=float(diversity_policy["controlling_joint_emphasis"]),
         near_duplicate_joint_space_rad=float(duplicate_policy["joint_space_rad"]),
         near_duplicate_position_m=float(duplicate_policy["position_m"]),
@@ -254,6 +267,70 @@ def _classify(metrics: Dict[str, np.ndarray], near_joint_limit_threshold: float,
     }
 
 
+def class_eligibility_masks(
+    metrics: Dict[str, np.ndarray],
+    classification: Dict[str, np.ndarray],
+    near_joint_limit_threshold: float,
+    near_singularity_threshold: float,
+    near_limit_min_sigma_min: float,
+) -> Dict[str, np.ndarray]:
+    """Phase 5.2 [LOCKED] mutually-exclusive anchor-class eligibility.
+
+    These predicates govern *anchor selection only*. The global difficulty definitions and the
+    four diagnostic flags in ``classification`` are computed independently and are not altered
+    here. An anchor may be near a joint limit OR near-singular, never both -- Phase 5.1 measured
+    the cost of the compound case (a near-limit *and* near-singular anchor forced its closed-shape
+    trajectories to scale 0.12/0.20).
+    """
+    sigma_min = metrics["sigma_min"]
+    margin = metrics["normalized_margin"]
+
+    regular = (sigma_min > near_limit_min_sigma_min) & (margin > near_joint_limit_threshold)
+    near_limit = (
+        (margin <= near_joint_limit_threshold)
+        & (sigma_min > near_limit_min_sigma_min)
+        & (~classification["is_near_singular"])
+    )
+    near_singular = (
+        (sigma_min <= near_singularity_threshold)
+        & (margin > near_joint_limit_threshold)
+        & (~classification["is_near_limit"])
+    )
+    return {"regular": regular, "near_limit": near_limit, "near_singular": near_singular}
+
+
+def candidate_availability_report(
+    metrics: Dict[str, np.ndarray],
+    classification: Dict[str, np.ndarray],
+    eligibility: Dict[str, np.ndarray],
+    near_joint_limit_threshold: float,
+    near_singularity_threshold: float,
+    near_limit_min_sigma_min: float,
+) -> dict:
+    """Candidate-availability breakdown reported before any anchor is selected (spec section 3)."""
+    sigma_min = metrics["sigma_min"]
+    margin = metrics["normalized_margin"]
+    raw_near_limit = classification["is_near_limit"]
+    raw_near_singular = classification["is_near_singular"]
+
+    return {
+        "total_candidates": int(sigma_min.shape[0]),
+        "raw_near_limit_total": int(np.sum(raw_near_limit)),
+        "near_limit_well_conditioned_count": int(np.sum(raw_near_limit & (sigma_min > near_limit_min_sigma_min))),
+        "near_limit_moderately_conditioned_count": int(
+            np.sum(raw_near_limit & (sigma_min > near_singularity_threshold) & (sigma_min <= near_limit_min_sigma_min))
+        ),
+        "near_limit_near_singular_overlap_count": int(np.sum(raw_near_limit & raw_near_singular)),
+        "raw_near_singular_total": int(np.sum(raw_near_singular)),
+        "near_singular_clean_count": int(np.sum(raw_near_singular & (margin > near_joint_limit_threshold))),
+        "near_singular_near_limit_overlap_count": int(np.sum(raw_near_singular & raw_near_limit)),
+        "eligible_regular_count": int(np.sum(eligibility["regular"])),
+        "eligible_near_limit_count": int(np.sum(eligibility["near_limit"])),
+        "eligible_near_singular_count": int(np.sum(eligibility["near_singular"])),
+        "required": dict(ANCHOR_CLASS_TOTAL_COUNTS),
+    }
+
+
 # ---------------------------------------------------------------------------------------------
 # Diversity-aware selection (spec section 5)
 # ---------------------------------------------------------------------------------------------
@@ -364,42 +441,102 @@ def greedy_farthest_point_select(rng: np.random.Generator, features: np.ndarray,
 # ---------------------------------------------------------------------------------------------
 
 
+def _screen_class_for_feasibility(
+    model_context: ModelContext,
+    metrics: Dict[str, np.ndarray],
+    ordered_candidates: np.ndarray,
+    class_name: str,
+    target_count: int,
+    feasibility_settings,
+    core_settings,
+    probe_reach_settings,
+    master_seed: int,
+    cache: dict,
+    cache_context: dict,
+    stats,
+) -> Tuple[np.ndarray, Dict[int, dict]]:
+    """Stage A: keep only candidates that pass all ten locked combinations at >= the gate.
+
+    Candidates are screened in the deterministic diversity order supplied by the caller, so the
+    surviving subset is itself diverse and the replacement order is fixed -- there is no random
+    retry loop. Screening stops once the class's budget is spent or enough feasible candidates
+    exist for Stage B to choose from. A rejected candidate is always replaced from the SAME class
+    pool; candidates never move between classes.
+    """
+    from dataset_v2.anchor_feasibility import feasibility_cache_key, probe_anchor_feasibility
+
+    budget = feasibility_settings.screening_budget_per_class.get(class_name, 4 * target_count)
+    feasible_idx: List[int] = []
+    evidence: Dict[int, dict] = {}
+    screened = 0
+
+    for global_idx in ordered_candidates:
+        if screened >= budget or len(feasible_idx) >= max(target_count * 2, target_count + 4):
+            break
+        screened += 1
+        q = metrics["q"][int(global_idx)]
+        key = feasibility_cache_key(
+            q,
+            cache_context["model_fingerprint"],
+            cache_context["geometry_config_fingerprint"],
+            cache_context["reachability_config_fingerprint"],
+            feasibility_settings,
+        )
+        verdict = probe_anchor_feasibility(
+            model_context,
+            q,
+            feasibility_settings,
+            core_settings,
+            probe_reach_settings,
+            master_seed,
+            cache=cache,
+            cache_key=key,
+            stats=stats,
+        )
+        if verdict["feasible"]:
+            feasible_idx.append(int(global_idx))
+            evidence[int(global_idx)] = verdict
+        else:
+            failing = verdict.get("first_failing_combination")
+            if failing:
+                stats.failure_histogram[failing] = stats.failure_histogram.get(failing, 0) + 1
+
+    stats.screened[class_name] = screened
+    stats.passed[class_name] = len(feasible_idx)
+    stats.rejected[class_name] = screened - len(feasible_idx)
+    return np.array(feasible_idx, dtype=np.int64), evidence
+
+
 def _select_class_candidates(
     model_context: ModelContext,
     metrics: Dict[str, np.ndarray],
     classification: Dict[str, np.ndarray],
+    eligibility: Dict[str, np.ndarray],
     class_name: str,
     select_rng: np.random.Generator,
     controlling_joint_emphasis: float,
+    availability: dict,
+    feasibility_context: Optional[dict] = None,
 ) -> Tuple[np.ndarray, dict]:
-    """Select the exact quota for one anchor class, preferring 'clean' (non-overlapping)
-    candidates per spec section 3, falling back to overlapping candidates only if the clean
-    subset is insufficient. Returns (selected global indices, overlap-report dict).
-    """
-    target_count = ANCHOR_CLASS_TOTAL_COUNTS[class_name]
+    """Select the exact quota for one anchor class from its **isolated** eligible pool.
 
-    if class_name == "regular":
-        eligible_all = np.flatnonzero(classification["is_regular"])
-        clean = eligible_all
-        overlap_source = "n/a (regular has no overlap axis)"
-    elif class_name == "near_limit":
-        eligible_all = np.flatnonzero(classification["is_near_limit"])
-        clean = np.flatnonzero(classification["is_near_limit"] & (~classification["is_near_singular"]))
-        overlap_source = "clean" if clean.shape[0] >= target_count else "overlap_fallback"
-    elif class_name == "near_singular":
-        eligible_all = np.flatnonzero(classification["is_near_singular"])
-        clean = np.flatnonzero(classification["is_near_singular"] & (~classification["is_near_limit"]))
-        overlap_source = "clean" if clean.shape[0] >= target_count else "overlap_fallback"
-    else:
+    Phase 5.2: there is no overlap fallback. The eligibility predicates are mutually exclusive by
+    construction, so an insufficient pool is a hard failure reporting the candidate-availability
+    breakdown -- thresholds are never relaxed and anchors are never duplicated.
+    """
+    if class_name not in eligibility:
         raise ValueError(f"unknown anchor class '{class_name}'")
 
-    pool = clean if clean.shape[0] >= target_count else eligible_all
+    target_count = ANCHOR_CLASS_TOTAL_COUNTS[class_name]
+    pool = np.flatnonzero(eligibility[class_name])
+
     if pool.shape[0] < target_count:
         raise ValueError(
-            f"anchor class '{class_name}' only has {pool.shape[0]} eligible candidate(s) "
-            f"(clean={clean.shape[0]}, overlapping_total={eligible_all.shape[0]}), need {target_count}; "
-            "increase configs/anchor_config.json's candidate_pool_policy pool size(s) rather than "
-            "relaxing thresholds or duplicating anchors"
+            f"anchor class '{class_name}' has only {pool.shape[0]} eligible candidate(s) under the "
+            f"locked Phase 5.2 class-isolation predicate, need {target_count}. Candidate "
+            f"availability: {json.dumps(availability, sort_keys=True)}. Increase "
+            "configs/anchor_config.json's candidate_pool_policy pool size(s); never relax the "
+            "class-isolation thresholds and never duplicate an anchor."
         )
 
     features = build_feature_vectors(
@@ -409,16 +546,68 @@ def _select_class_candidates(
         include_controlling_joint_emphasis=(class_name == "near_limit"),
         controlling_joint_emphasis=controlling_joint_emphasis,
     )
-    local_selected = greedy_farthest_point_select(select_rng, features, target_count, class_name)
-    selected_global = pool[local_selected]
 
-    overlap_report = {
-        "clean_count": int(clean.shape[0]),
-        "overlap_count": int(eligible_all.shape[0] - clean.shape[0]) if class_name != "regular" else 0,
-        "eligible_total": int(eligible_all.shape[0]),
-        "selected_source": overlap_source if class_name != "regular" else "n/a",
+    if feasibility_context is None or not feasibility_context["settings"].enabled:
+        local_selected = greedy_farthest_point_select(select_rng, features, target_count, class_name)
+        return pool[local_selected], {
+            "eligible_count": int(pool.shape[0]),
+            "selected_count": int(target_count),
+            "selected_source": "isolated_eligible_pool",
+            "overlap_fallback_used": False,
+            "feasibility_screened": False,
+        }
+
+    # --- Stage A: feasibility screen, in deterministic diversity order --------------------------
+    screening_order_local = greedy_farthest_point_select(select_rng, features, pool.shape[0], class_name)
+    ordered_candidates = pool[screening_order_local]
+    feasible_pool, evidence = _screen_class_for_feasibility(
+        model_context,
+        metrics,
+        ordered_candidates,
+        class_name,
+        target_count,
+        feasibility_context["settings"],
+        feasibility_context["core_settings"],
+        feasibility_context["probe_reach_settings"],
+        feasibility_context["master_seed"],
+        feasibility_context["cache"],
+        feasibility_context["cache_context"],
+        feasibility_context["stats"],
+    )
+
+    if feasible_pool.shape[0] < target_count:
+        raise ValueError(
+            f"anchor class '{class_name}' has only {feasible_pool.shape[0]} candidate(s) passing all "
+            f"{feasibility_context['settings'].required_combinations} core-trajectory feasibility "
+            f"combinations at scale >= {feasibility_context['settings'].minimum_scale}, need {target_count}. "
+            f"Screened {feasibility_context['stats'].screened.get(class_name, 0)} candidate(s). "
+            "Increase configs/anchor_config.json's feasibility_screening.screening_budget_per_class or the "
+            "candidate pool size; never relax the scale gate, the class predicate or the reachability tolerances."
+        )
+
+    # --- Stage B: diversity selection over the FEASIBLE subset only ------------------------------
+    feasible_features = build_feature_vectors(
+        model_context,
+        metrics,
+        feasible_pool,
+        include_controlling_joint_emphasis=(class_name == "near_limit"),
+        controlling_joint_emphasis=controlling_joint_emphasis,
+    )
+    local_selected = greedy_farthest_point_select(select_rng, feasible_features, target_count, class_name)
+    selected_global = feasible_pool[local_selected]
+
+    selection_report = {
+        "eligible_count": int(pool.shape[0]),
+        "screened_count": int(feasibility_context["stats"].screened.get(class_name, 0)),
+        "feasible_count": int(feasible_pool.shape[0]),
+        "rejected_count": int(feasibility_context["stats"].rejected.get(class_name, 0)),
+        "selected_count": int(target_count),
+        "selected_source": "feasible_subset_of_isolated_eligible_pool",
+        "overlap_fallback_used": False,
+        "feasibility_screened": True,
     }
-    return selected_global, overlap_report
+    feasibility_context["evidence"].update({int(i): evidence[int(i)] for i in selected_global})
+    return selected_global, selection_report
 
 
 def _assign_splits(rng: np.random.Generator, selected_idx: np.ndarray, split_counts: Dict[str, int]) -> Dict[str, np.ndarray]:
@@ -598,27 +787,87 @@ def run_anchor_generation(
     classification = _classify(
         metrics, settings.near_joint_limit_threshold, settings.near_singularity_threshold, settings.moderately_conditioned_upper_bound
     )
+    eligibility = class_eligibility_masks(
+        metrics,
+        classification,
+        settings.near_joint_limit_threshold,
+        settings.near_singularity_threshold,
+        settings.near_limit_min_sigma_min,
+    )
+    availability = candidate_availability_report(
+        metrics,
+        classification,
+        eligibility,
+        settings.near_joint_limit_threshold,
+        settings.near_singularity_threshold,
+        settings.near_limit_min_sigma_min,
+    )
+
+    # --- feasibility screening context (Phase 5.4) ------------------------------------------------
+    from dataset_v2.anchor_feasibility import (
+        FeasibilityStats,
+        config_fingerprints,
+        load_feasibility_settings,
+        process_feasibility_cache,
+    )
+    from dataset_v2.core_trajectory_generation import load_core_trajectory_generation_settings
+    from dataset_v2.generation_reachability import load_generation_reachability_settings, probe_settings_from
+
+    feasibility_settings = load_feasibility_settings(paths)
+    feasibility_stats = FeasibilityStats()
+    feasibility_context = None
+    if feasibility_settings.enabled:
+        geometry_fp, reachability_fp = config_fingerprints(paths)
+        feasibility_context = {
+            "settings": feasibility_settings,
+            "core_settings": load_core_trajectory_generation_settings(paths),
+            "probe_reach_settings": probe_settings_from(paths, load_generation_reachability_settings(paths)),
+            "master_seed": resolved_master_seed,
+            "cache": process_feasibility_cache(),
+            "cache_context": {
+                "model_fingerprint": sha256_file(V1_MODEL_PATH),
+                "geometry_config_fingerprint": geometry_fp,
+                "reachability_config_fingerprint": reachability_fp,
+            },
+            "evidence": {},
+            "stats": feasibility_stats,
+        }
 
     selected_global_by_class: Dict[str, np.ndarray] = {}
-    overlap_report_by_class: Dict[str, dict] = {}
+    selection_report_by_class: Dict[str, dict] = {}
     select_seed_by_class: Dict[str, int] = {}
 
+    screening_started = time.perf_counter()
     for class_name in ANCHOR_CLASSES:
         class_id = ANCHOR_CLASS_IDS[class_name]
         select_seed = derive_seed(anchors_component_seed, SELECT_TAG, class_id)
         select_seed_by_class[class_name] = select_seed
         select_rng = np.random.default_rng(select_seed)
-        selected_global, overlap_report = _select_class_candidates(
-            model_context, metrics, classification, class_name, select_rng, settings.controlling_joint_emphasis
+        selected_global, selection_report = _select_class_candidates(
+            model_context,
+            metrics,
+            classification,
+            eligibility,
+            class_name,
+            select_rng,
+            settings.controlling_joint_emphasis,
+            availability,
+            feasibility_context,
         )
         selected_global_by_class[class_name] = selected_global
-        overlap_report_by_class[class_name] = overlap_report
+        selection_report_by_class[class_name] = selection_report
+    feasibility_stats.runtime_seconds = time.perf_counter() - screening_started
 
     split_assignment_by_class: Dict[str, Dict[str, np.ndarray]] = {}
     split_seed_by_class: Dict[str, int] = {}
     for class_name in ANCHOR_CLASSES:
         class_id = ANCHOR_CLASS_IDS[class_name]
-        split_seed = derive_seed(anchors_component_seed, SPLIT_TAG, class_id)
+        # The frozen-test seed revision participates in the split permutation: with exact 2/1/1
+        # quotas, frozen membership is the complement of development+validation, so a fresh frozen
+        # namespace necessarily re-permutes the whole class assignment (documented in
+        # configs/seed_policy.json:frozen_core_seed_policy). Phase 5.2 regenerates every anchor
+        # anyway, so no split retains prior content.
+        split_seed = derive_seed(anchors_component_seed, SPLIT_TAG, class_id, settings.frozen_core_seed_revision)
         split_seed_by_class[class_name] = split_seed
         split_assignment_by_class[class_name] = _assign_splits(
             np.random.default_rng(split_seed), selected_global_by_class[class_name], settings.split_counts_per_class[class_name]
@@ -655,6 +904,9 @@ def run_anchor_generation(
     is_near_singular_out = np.empty(len(rows), dtype=bool)
     is_moderately_conditioned_out = np.empty(len(rows), dtype=bool)
     is_regular_out = np.empty(len(rows), dtype=bool)
+    feasibility_passed_out = np.empty(len(rows), dtype=bool)
+    feasibility_combinations_out = np.empty(len(rows), dtype=np.int32)
+    feasibility_worst_scale_out = np.empty(len(rows))
     source_pool_out: List[str] = []
     source_seed_out = np.empty(len(rows), dtype=np.int64)
     content_hash_out: List[str] = []
@@ -688,6 +940,17 @@ def run_anchor_generation(
         is_regular_out[row_i] = bool(classification["is_regular"][global_idx])
         source_pool_out.append(pool_labels[global_idx])
         source_seed_out[row_i] = pool_source_seeds[global_idx]
+
+        # per-anchor proof that all ten locked combinations passed the feasibility screen
+        verdict = (feasibility_context or {}).get("evidence", {}).get(global_idx)
+        if verdict is None:
+            feasibility_passed_out[row_i] = not feasibility_settings.enabled
+            feasibility_combinations_out[row_i] = 0
+            feasibility_worst_scale_out[row_i] = -1.0
+        else:
+            feasibility_passed_out[row_i] = bool(verdict["feasible"])
+            feasibility_combinations_out[row_i] = int(verdict["combinations_passed"])
+            feasibility_worst_scale_out[row_i] = float(verdict["worst_accepted_scale"])
         content_hash_out.append(
             content_hash_of_record(
                 {
@@ -734,6 +997,9 @@ def run_anchor_generation(
         "source_pool": np.array(source_pool_out, dtype="<U24"),
         "source_seed": source_seed_out,
         "content_hash": np.array(content_hash_out, dtype="<U64"),
+        "feasibility_passed": feasibility_passed_out,
+        "feasibility_combinations_passed": feasibility_combinations_out,
+        "feasibility_worst_accepted_scale": feasibility_worst_scale_out,
     }
 
     npz_path = save_npz(anchors_dir / NPZ_NAME, arrays, overwrite=overwrite)
@@ -812,13 +1078,61 @@ def run_anchor_generation(
             "near_joint_limit_threshold": settings.near_joint_limit_threshold,
             "near_singularity_threshold": settings.near_singularity_threshold,
             "moderately_conditioned_upper_bound": settings.moderately_conditioned_upper_bound,
+            "near_limit_min_sigma_min": settings.near_limit_min_sigma_min,
         },
+        "anchor_class_isolation_status": "locked",
+        "frozen_core_seed_revision": settings.frozen_core_seed_revision,
+        "candidate_availability": availability,
         "candidate_pool_sizes": {
             "regular_pool": int(regular_pool.shape[0]),
             "near_limit_biased_pool": int(near_limit_pool.shape[0]),
             "singularity_biased_pool": int(singularity_pool.shape[0]),
         },
-        "overlap_report_by_class": overlap_report_by_class,
+        "selection_report_by_class": selection_report_by_class,
+        "feasibility_screening": {
+            "enabled": feasibility_settings.enabled,
+            "required_combinations": feasibility_settings.required_combinations,
+            "minimum_scale": feasibility_settings.minimum_scale,
+            "coarse_canonical_waypoints": feasibility_settings.coarse_canonical_waypoints,
+            "coarse_source_waypoints": feasibility_settings.coarse_source_waypoints,
+            "full_verification_canonical_waypoints": 400,
+            "candidates_screened_per_class": dict(feasibility_stats.screened),
+            "candidates_passed_per_class": dict(feasibility_stats.passed),
+            "candidates_rejected_per_class": dict(feasibility_stats.rejected),
+            "failure_histogram_by_combination": dict(sorted(feasibility_stats.failure_histogram.items())),
+            "cache_hits": feasibility_stats.cache_hits,
+            "cache_misses": feasibility_stats.cache_misses,
+            "worst_accepted_scale_semantics": (
+                "the probe tests the gate rung (smallest scheduled scale >= minimum_scale), so this "
+                "is the scale at which feasibility was VERIFIED, not the best achievable scale -- "
+                "the generator maximizes the accepted scale afterwards and can only do better"
+            ),
+            "screening_runtime_seconds": round(feasibility_stats.runtime_seconds, 3),
+            "geometry_config_fingerprint": (feasibility_context or {}).get("cache_context", {}).get("geometry_config_fingerprint"),
+            "reachability_config_fingerprint": (feasibility_context or {}).get("cache_context", {}).get("reachability_config_fingerprint"),
+            "selected_anchor_feasibility": {
+                anchor_ids[i]: {
+                    "passed": bool(feasibility_passed_out[i]),
+                    "combinations_passed": int(feasibility_combinations_out[i]),
+                    "worst_accepted_scale": float(feasibility_worst_scale_out[i]),
+                }
+                for i in range(len(anchor_ids))
+            },
+            "selected_anchor_worst_combination": {
+                anchor_ids[i]: min(
+                    (
+                        (label, v["best_scale"])
+                        for label, v in ((feasibility_context or {}).get("evidence", {}).get(rows[i]["global_idx"], {}) or {})
+                        .get("matrix", {})
+                        .items()
+                        if v.get("best_scale") is not None
+                    ),
+                    key=lambda kv: kv[1],
+                    default=None,
+                )
+                for i in range(len(anchor_ids))
+            },
+        },
         "total_anchors": len(anchor_ids),
         "class_counts": class_counts,
         "split_counts": split_counts,

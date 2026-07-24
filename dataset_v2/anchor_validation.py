@@ -17,7 +17,7 @@ from dataset_v2.anchor_generation import (
     NPZ_NAME,
     SPLIT_IDS,
 )
-from dataset_v2.config_templates import ANCHOR_CLASS_PRIORITY_HIGHEST_FIRST, SPLITS
+from dataset_v2.config_templates import SPLITS
 from dataset_v2.locator import require_dataset_v2_root
 from kinematics.forward_kinematics import forward_kinematics
 from kinematics.jacobian import geometric_jacobian_world
@@ -42,17 +42,6 @@ class AnchorValidationReport:
     class_counts: Dict[str, int] = field(default_factory=dict)
     split_counts: Dict[str, int] = field(default_factory=dict)
     class_split_counts: Dict[str, Dict[str, int]] = field(default_factory=dict)
-
-
-def _classify_single(normalized_margin, sigma_min, near_joint_limit_threshold, near_singularity_threshold, moderately_conditioned_upper_bound) -> str:
-    is_near_singular = sigma_min <= near_singularity_threshold
-    is_near_limit = normalized_margin <= near_joint_limit_threshold
-    is_regular = (sigma_min > moderately_conditioned_upper_bound) and (normalized_margin > near_joint_limit_threshold)
-    eligibility = {"near_singular": is_near_singular, "near_limit": is_near_limit, "regular": is_regular}
-    for name in ANCHOR_CLASS_PRIORITY_HIGHEST_FIRST:
-        if eligibility[name]:
-            return name
-    return "none"
 
 
 def validate_anchors(
@@ -142,6 +131,17 @@ def validate_anchors(
     near_singularity_threshold = float(thresholds["near_singularity"]["threshold_sigma_min"])
     moderately_conditioned_upper_bound = float(thresholds["moderately_conditioned"]["upper_bound_sigma_min"])
 
+    anchor_config_for_isolation = load_json_config(paths.configs_dir / "anchor_config.json")
+    if anchor_config_for_isolation.get("anchor_class_isolation_status") != "locked":
+        reasons.append(
+            "configs/anchor_config.json:anchor_class_isolation_status is not 'locked'; Phase 5.2 "
+            "requires mutually-exclusive anchor classes"
+        )
+    near_limit_min_sigma_min = float(
+        anchor_config_for_isolation["class_eligibility_predicates"]["near_limit"]["min_sigma_min_exclusive"]
+    )
+    isolation_violations: List[str] = []
+
     data = model_context.new_data()
     covariate_mismatches = 0
     classification_mismatches = 0
@@ -192,22 +192,21 @@ def validate_anchors(
         ):
             flag_mismatches += 1
 
-        recomputed_class = _classify_single(
-            normalized_margin, sigma_min, near_joint_limit_threshold, near_singularity_threshold, moderately_conditioned_upper_bound
-        )
         stored_class_name = {v: k for k, v in ANCHOR_CLASS_IDS.items()}[int(arrays["anchor_class_id"][i])]
-        # The stored anchor_class is which target list the anchor was *drawn for* (regular/
-        # near_limit/near_singular candidate pool), which may legitimately differ from the
-        # highest-priority eligible class when an overlap fallback was used (spec section 3);
-        # only flag a mismatch when the anchor doesn't even satisfy its own stored class's raw
-        # eligibility criterion.
+        # Phase 5.2 [LOCKED]: anchor classes are mutually exclusive by construction, so the stored
+        # class must satisfy its *isolated* eligibility predicate -- there is no overlap fallback
+        # to excuse a compound (near_limit AND near_singular) anchor any more.
         own_class_eligible = {
-            "near_singular": is_near_singular,
-            "near_limit": is_near_limit,
+            "near_singular": is_near_singular and (normalized_margin > near_joint_limit_threshold) and not is_near_limit,
+            "near_limit": is_near_limit and (sigma_min > near_limit_min_sigma_min) and not is_near_singular,
             "regular": is_regular,
         }[stored_class_name]
         if not own_class_eligible:
             classification_mismatches += 1
+            isolation_violations.append(
+                f"{anchor_ids[i]} (class '{stored_class_name}', sigma_min={sigma_min:.6f}, "
+                f"normalized_margin={normalized_margin:.8f})"
+            )
 
     if np.any(fk_position_errors > FK_POSITION_TOLERANCE_M):
         reasons.append(f"FK(q) does not match stored position for {int(np.sum(fk_position_errors > FK_POSITION_TOLERANCE_M))} anchor(s)")
@@ -218,7 +217,65 @@ def validate_anchors(
     if flag_mismatches:
         reasons.append(f"{flag_mismatches} anchor(s) have a recomputed diagnostic flag that does not match the stored value")
     if classification_mismatches:
-        reasons.append(f"{classification_mismatches} anchor(s) do not satisfy their own stored anchor_class's eligibility criterion")
+        reasons.append(
+            f"{classification_mismatches} anchor(s) violate the locked Phase 5.2 class-isolation "
+            f"predicate for their own stored anchor_class: {'; '.join(isolation_violations)}"
+        )
+
+    # --- Phase 5.4 feasibility evidence ------------------------------------------------------
+    screening = anchor_config_for_isolation.get("feasibility_screening", {})
+    if screening.get("enabled"):
+        required = int(screening["required_combinations"])
+        minimum_scale = float(screening["minimum_scale"])
+        for name in ("feasibility_passed", "feasibility_combinations_passed", "feasibility_worst_accepted_scale"):
+            if name not in arrays:
+                reasons.append(f"anchor catalog carries no '{name}' -- feasibility evidence is mandatory when screening is enabled")
+        if all(k in arrays for k in ("feasibility_passed", "feasibility_combinations_passed", "feasibility_worst_accepted_scale")):
+            for i in range(n):
+                if not bool(arrays["feasibility_passed"][i]):
+                    reasons.append(f"anchor '{anchor_ids[i]}' has no passing feasibility evidence")
+                tested = int(arrays["feasibility_combinations_passed"][i])
+                if tested < required:
+                    reasons.append(
+                        f"anchor '{anchor_ids[i]}' passed only {tested} of the required {required} core-trajectory "
+                        "feasibility combinations (partial feasibility is never accepted)"
+                    )
+                verified_scale = float(arrays["feasibility_worst_accepted_scale"][i])
+                if verified_scale < minimum_scale:
+                    reasons.append(
+                        f"anchor '{anchor_ids[i]}' feasibility was verified at scale {verified_scale} which is below "
+                        f"the locked minimum {minimum_scale}"
+                    )
+        # the screen's geometry/reachability fingerprints must match the configs actually present
+        report_path = anchors_dir / "anchor_generation_report.json"
+        if report_path.is_file():
+            import json as _json
+
+            from dataset_v2.anchor_feasibility import config_fingerprints
+
+            report = _json.loads(report_path.read_text(encoding="utf-8"))
+            recorded = report.get("feasibility_screening", {})
+            geometry_fp, reachability_fp = config_fingerprints(paths)
+            if recorded.get("geometry_config_fingerprint") != geometry_fp:
+                reasons.append(
+                    "feasibility screening geometry_config_fingerprint does not match the current "
+                    "trajectory config -- the screen was run against different geometry"
+                )
+            if recorded.get("reachability_config_fingerprint") != reachability_fp:
+                reasons.append(
+                    "feasibility screening reachability_config_fingerprint does not match the current "
+                    "generation reachability config"
+                )
+            recorded_matrix = recorded.get("selected_anchor_feasibility", {})
+            for i in range(n):
+                entry = recorded_matrix.get(anchor_ids[i])
+                if entry is None:
+                    reasons.append(f"anchor '{anchor_ids[i]}' has no feasibility matrix entry in the generation report")
+                elif int(entry.get("combinations_passed", 0)) != int(arrays["feasibility_combinations_passed"][i]):
+                    reasons.append(
+                        f"anchor '{anchor_ids[i]}' feasibility evidence in the report does not match the catalog "
+                        "(evidence may belong to a different anchor)"
+                    )
 
     # --- split anti-leakage / near-duplicate check ---
     anchor_config = load_json_config(paths.configs_dir / "anchor_config.json")
