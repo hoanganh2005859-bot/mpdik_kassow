@@ -161,6 +161,37 @@ def apply_core_trajectory_generation_status(
     return updated
 
 
+def apply_challenge_trajectory_generation_status(
+    manifest: dict,
+    total_trajectories: int,
+    split_counts: dict,
+    family_counts: dict,
+    family_split_counts: dict,
+    canonical_waypoints_per_trajectory: int,
+    full_locked_counts: bool,
+) -> dict:
+    """Return a copy of ``manifest`` with ``counts.random_challenge_trajectories`` updated to the
+    *actual* generated counts (Phase 6). Never mutates dataset-wide
+    ``generated``/``frozen``/``status`` -- challenge trajectories being generated does not mean
+    Tier 0-1/anchors/core-trajectories/trials are (see ``apply_tier0_generation_status``).
+    """
+    updated = dict(manifest)
+    counts = dict(updated.get("counts", {}))
+    counts["random_challenge_trajectories"] = {
+        **dict(counts.get("random_challenge_trajectories", {})),
+        "total": int(total_trajectories),
+        "generated": True,
+        "full_locked_counts": bool(full_locked_counts),
+        "split_counts": dict(split_counts),
+        "family_counts": dict(family_counts),
+        "family_split_counts": {name: dict(value) for name, value in family_split_counts.items()},
+        "canonical_waypoints_per_trajectory": int(canonical_waypoints_per_trajectory),
+        "canonical_poses_total": int(total_trajectories) * int(canonical_waypoints_per_trajectory),
+    }
+    updated["counts"] = counts
+    return updated
+
+
 def apply_point_ik_generation_status(
     manifest: dict,
     total_samples: int,

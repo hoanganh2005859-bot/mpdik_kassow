@@ -1865,3 +1865,152 @@ unchanged.
 Random challenge trajectory generator (90, split 30/30/30), reusing this phase's strict
 reachability engine, geometry-alternative search and feasibility-aware machinery, followed by the
 easy/medium/hard trial generator (630 trials).
+
+## Phase 6 -- Random-challenge trajectory generator, validator, CLI
+
+- **Status**: COMPLETE. Random-challenge trajectories only -- no trials, no DLS baseline
+  evaluation, no Tier 1-4 evaluation.
+- **Baseline before this phase**: branch `feature/dataset-v2`, commit `2ba2241d`, clean working
+  tree, `pytest -q` -> **672 passed**, 0 failed/skipped/errored (confirmed by a full run this
+  phase; this machine is ~5x slower than Phase 5.4's `.venv`, so the suite took 34 min here).
+
+### Locked challenge generation policy (spec section I.1)
+
+Phase 0 locked only the 90 / 30-30-30 / 400-canonical counts and left the challenge *generation*
+policy `[PROVISIONAL]`. Phase 6 locks it, machine-readable in
+`configs/random_challenge_config.json` (`status: counts_and_policy_locked_generation_implemented`).
+The initial `[PROVISIONAL]` note proposed interpolating between randomly drawn Cartesian control
+poses; Phase 6 instead adopts a **smooth joint-space reference family through FK**, which is
+strictly stronger on reachability (the property the locked count depends on) and is the reason the
+90/90 outcome is a property of the policy rather than luck.
+
+- **Mechanism**: each trajectory starts from an **independent reachable start state** (never one of
+  the 12 anchors) and follows a bounded-Fourier joint-space curve
+  `q(s)=q_start+offset(s)`, `offset_j(0)=0`, with each joint's amplitude capped at
+  `envelope_margin_fraction` (0.90) of that joint's own start joint-limit margin. The reference
+  therefore stays inside operational limits with no clipping (C-∞ smooth, bounded curvature); every
+  source pose = FK(q(s)) is reachable by construction; orientation is the genuine FK orientation of
+  the joint curve. Source (1201 FK samples, > 400) + canonical (400, arc-length-resampled via the
+  same `resample_canonical` as core: piecewise-linear position, SO(3) SLERP orientation, exact
+  endpoints, sign-continuous quaternions).
+- **Six families** (5 per split × 3 = 15 each; 6 × 15 = 90): `smooth_random`, `mixed_curvature`,
+  `non_planar`, `large_orientation`, `near_limit_region`, `near_singular_region` -- each with a
+  machine-readable region, harmonic set, per-joint amplitude weights, envelope fraction, curvature
+  ceiling, coverage floor (where relevant), seed tag and per-split quota.
+  `near_limit_region`/`near_singular_region` start states additionally satisfy the Phase 2.5 locked
+  `near_joint_limit` (normalized margin <= 0.024991237796029034) / `near_singularity`
+  (`sigma_min` <= 0.03) thresholds.
+- **Acceptance policy**: no core-style Cartesian scale gate is invented (challenge paths are not
+  scaled shapes). Acceptance = start-state validity (+ family start predicate) + within-limits
+  bounded envelope + strict independent-FK reachability on all source AND canonical waypoints +
+  finite bounded curvature + family coverage floors (`non_planar` min non-planarity 0.02,
+  `large_orientation` min angular displacement 0.30 rad).
+- **Feasibility-aware diversity selection** (mirrors Phase 5.4): per (family, split) a seeded
+  16-candidate pool is coarse-probe screened for strict reachability + coverage floors; the feasible
+  subset is diversity-selected (greedy farthest-point over joint-space / workspace centroid /
+  arc-length / angular displacement / curvature / non-planarity / start `sigma_min` / start margin,
+  reusing `greedy_farthest_point_select`) down to the quota; the selected candidates are re-validated
+  at full 400/1201 resolution; a full-validation failure is replaced deterministically from the same
+  pool -- never by loosening reachability, counts or the family policy.
+
+### Seed / frozen policy
+
+`master_seed` -> `derive_seed(master_seed, component_tags["random_challenge"]=50)` = challenge
+component seed -> per (family, split) `derive_seed(component_seed, family_tag, split_tag[,
+frozen_challenge_seed_revision if frozen_test])` -> per candidate `derive_seed(family_split_seed,
+7, candidate_index)`. Split isolation is guaranteed by the distinct `split_tag`; frozen isolation
+additionally mixes in the new **`frozen_challenge_seed_revision = 1`** (a SEPARATE namespace,
+locked before frozen generation). `frozen_core_seed_revision` stays **4** (unchanged). All seeds
+use `dataset_v2/seeds.py` (`seed_algorithm_id = dataset_v2/seed/sha256/v1`); no global numpy.random
+state. Same-seed regeneration is byte-identical, different seed changes content (both tested; also
+verified on NumPy 1.26.4 here despite Phase 5.4's fix being motivated on NumPy 2.x).
+
+### Files added/modified
+
+- **New**: `dataset_v2/challenge_trajectory_generation.py` (generator: region-based independent
+  start draw reusing Tier 0's `_group_random_interior`/`_group_mixed_near_limits`/
+  `_build_singularity_candidate_pool`; bounded-Fourier joint reference; FK path; `resample_canonical`
+  reused from core; curvature/non-planarity diagnostics; coarse feasibility screen + greedy diversity
+  select + full re-validation; NPZ/manifest/reachability/diversity/feasibility/anti-leakage reports;
+  manifest + checksum update). `dataset_v2/challenge_trajectory_validation.py` (independent
+  validator). `pipelines/run_dataset_v2_challenge_trajectory_generation.py` (CLI).
+  `tests/test_dataset_v2_challenge_trajectory_generation.py` (34 tests),
+  `tests/test_dataset_v2_challenge_trajectory_validation.py` (15 tests).
+- **Modified** (extended, not rewritten): `dataset_v2/config_templates.py` (challenge constants,
+  full `random_challenge_config()` family policy, `frozen_challenge_seed_revision` in
+  `seed_policy_config`); `dataset_v2/schemas.py` (`challenge_trajectory_schema()`, registered ->
+  10 schemas); `dataset_v2/manifest.py` (`apply_challenge_trajectory_generation_status`);
+  `specs/DLS_DATASET_V2_SPEC.md` (section I.1); `tests/test_dataset_v2_scaffold.py` (schema count
+  9 -> 10).
+
+### Full temporary run (master_seed 42, temporary root, deleted after inspection)
+
+Full locked mode, no overrides (source 1201). Generation **390 s**, independent validation **22 s**:
+
+- **Counts**: 90 total, split **30/30/30**, family **15 each**, family×split **5/5/5** -- all exact.
+  400 canonical waypoints each -> **36,000 canonical challenge poses**. `full_locked_counts=True`.
+- **Strict reachability** (tolerance 1e-4 m / 0.01 deg, independent FK, DLS-baseline-independent):
+  every canonical AND source waypoint reachable. Canonical position max **8.03e-05 m** (P95
+  4.98e-05), orientation max **0.0078 deg**; source position max **6.16e-05 m** (P95 4.95e-05),
+  orientation max **0.0095 deg** -- all inside tolerance. No waypoint skipped.
+- **Diversity** (real, load-bearing): arc length **0.067 - 2.577 m**, cumulative angular
+  displacement **0.229 - 6.119 rad**, mean curvature **2.21 - 85.4 1/m** (finite, far below the
+  20000 ceiling), non-planarity **0.0071 - 0.1336**. `non_planar` family clears its 0.02
+  non-planarity floor; `large_orientation` clears its 0.30 rad angular floor.
+- **Determinism**: byte-identical NPZ on same-seed reruns; different content on a different seed.
+- **Frozen challenge revision 1**; frozen_test path seeds disjoint from development/validation.
+- **Integrity**: independent validator `passed=True` (90 / 36,000); checksum mismatches **0**;
+  anti-leakage `pass=true`, 0 collisions (trajectory_id / content_hash / canonical & source path
+  hash / path_seed / near-duplicate start+path-metrics / no-duplicate-with-core); schema validates a
+  representative record. No NPZ/CSV/JSON committed.
+- **Combined 210 / 84,000**: verified against a real full core catalog (12 anchors + 120 core
+  trajectories regenerated at the locked config in a separate temporary root; core validator
+  `passed=True`, 120 / 48,000). With the real 120-row core manifest present, the challenge
+  validator's combined check confirms **210 trajectories / 84,000 canonical poses** and **zero**
+  challenge/core content-hash collisions (verified this phase).
+
+### Candidate screening summary
+
+Feasibility-aware selection screened 16 candidates per (family, split) = 288 candidates; the
+joint-space construction makes candidates reachable by construction, so the feasible subset always
+exceeded the quota and no full-validation replacement was needed in the full run (recorded in
+`challenge_trajectory_feasibility_report.json`). Diversity selection genuinely reorders the feasible
+pool (recorded `diversity_ranked_indices` are not the natural 0..k order).
+
+### Tests
+
+- Targeted challenge: `pytest tests/test_dataset_v2_challenge_trajectory_generation.py
+  tests/test_dataset_v2_challenge_trajectory_validation.py -q` -> **49 passed** (34 + 15).
+- Regression (scaffold, touched by the schema-count + config changes):
+  `pytest tests/test_dataset_v2_scaffold.py -q` -> **27 passed**.
+- Full suite: `pytest -q` -> **721 passed** (672 baseline + 49 new), 0 failed/skipped/errored
+  (verified this phase; ~33 min on this machine).
+
+### Confirmations
+
+- Dataset v1: **not modified**. Only `dataset_v2/`, `pipelines/`, `specs/`, `docs/`, `tests/` files
+  touched; nothing under `assets/`/`benchmarks/`/`trajectories/`(v1)/`configs/`(v1)/`schemas/`(v1)/
+  `kinematics/`/`algorithms/`/`generators/`/`evaluation/`, root `VERSION`, root
+  `DATASET_MANIFEST.json`. HEAD unchanged `2ba2241d`; nothing committed or pushed.
+- Nothing locked weakened: 120 core policy, stable seed algorithm, `frozen_core_seed_revision=4`,
+  anchor predicates, strict reachability (1e-4 m / 0.01 deg), core minimum scale gate 0.50, FK /
+  Jacobian / SO(3) / DLS / adaptive damping -- all unchanged. No trials generated, no Tier 1-4
+  evaluation, no PPO/MPDIK/MAPPO.
+- Official permanent Dataset v2 challenge data: **not generated/committed** -- produced in temporary
+  roots for verification and deleted.
+
+### Phase 6 final status: **COMPLETE**
+
+90 random-challenge trajectories generated and independently validated at the locked config: exact
+90 / 30-30-30 / 15-per-family / 5-per-family-per-split / 36,000 canonical poses; combined
+210 / 84,000 with the core catalog; strict source + canonical reachability under a
+DLS-baseline-independent 1e-4 m / 0.01 deg criterion; deterministic; frozen challenge revision 1;
+validator / schema / checksum / anti-leakage all green; Dataset v1 unchanged.
+
+### Recommended Phase 7
+
+The easy/medium/hard trial generator (630 trials = 3 per trajectory across all 210 core +
+random-challenge trajectories, spec section J), reusing the strict reachability engine and the
+independent-start construction introduced here; the trial `q_initial` must be constructed only
+against each trajectory's first canonical waypoint pose (never a future waypoint's solution, spec
+section J).

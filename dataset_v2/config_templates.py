@@ -173,6 +173,14 @@ def seed_policy_config(master_seed: int) -> dict:
         "split_tags": dict(SEED_SPLIT_TAGS),
         "frozen_core_seed_revision": FROZEN_CORE_SEED_REVISION,
         "frozen_core_seed_revision_history": [dict(entry) for entry in FROZEN_CORE_SEED_REVISION_HISTORY],
+        "frozen_challenge_seed_revision": FROZEN_CHALLENGE_SEED_REVISION,
+        "frozen_challenge_seed_revision_history": [dict(entry) for entry in FROZEN_CHALLENGE_SEED_REVISION_HISTORY],
+        "frozen_challenge_seed_policy": (
+            "Phase 6: random-challenge frozen_test path seeds and coefficient draws mix in "
+            "frozen_challenge_seed_revision (a SEPARATE namespace from frozen_core_seed_revision, "
+            "which stays 4). development/validation challenge seeds use the unrevised namespace. "
+            "Locked before frozen challenge generation; never rerolled to find an easier frozen set."
+        ),
         "frozen_core_seed_policy": (
             "frozen_test-specific seeds (anchor split assignment and core-trajectory path seeds) "
             "mix in frozen_core_seed_revision; development/validation keep their existing seed "
@@ -411,6 +419,55 @@ SCALE_DIAGNOSTIC_BANDS = [1.0, 0.75, 0.5, 0.25]
 # preserve at least half of the nominal core trajectory geometry, so a "circle" benchmark stays a
 # recognisably-sized circle rather than a few-millimetre loop.
 MINIMUM_CORE_ACCEPTED_SCALE = 0.50
+
+# --- Phase 6 random challenge trajectory policy -----------------------------------------------
+# 90 random-challenge trajectories, split 30/30/30, each exactly 400 canonical waypoints
+# (spec section B/I). Unlike core trajectories (Cartesian closed-form shapes anchored at the 12
+# locked anchors), challenge trajectories are drawn from smooth, seeded JOINT-SPACE reference
+# families and pushed through forward kinematics -- a "known-reachable joint-space reference family
+# converted through FK" (task section 6). Working in joint space with per-joint amplitude bounded
+# by the start state's own joint-limit margin makes every source pose reachable by construction
+# (a valid q provably exists for it), which is why the locked 90/90 outcome is a property of the
+# policy rather than luck. The same strict, DLS-baseline-independent reachability engine
+# (configs/generation_reachability_config.json, 1e-4 m / 0.01 deg) still verifies every source and
+# canonical waypoint independently; nothing here trusts the numerical IK engine's success flag.
+CHALLENGE_TOTAL = 90
+CHALLENGE_SPLIT_SIZES = {"development": 30, "validation": 30, "frozen_test": 30}
+CHALLENGE_CANONICAL_WAYPOINTS = 400
+CHALLENGE_SOURCE_WAYPOINTS_NOMINAL = 1201  # > 400 (task section 6); ~3x canonical for fine resample
+CHALLENGE_DURATION_S = 10.0
+
+# Six locked challenge families x 5 per split x 3 splits = 90. Each family targets a coverage
+# aspect the task (section 4) approves as increasing coverage beyond the 120 core paths.
+CHALLENGE_FAMILIES = [
+    "smooth_random",
+    "mixed_curvature",
+    "non_planar",
+    "large_orientation",
+    "near_limit_region",
+    "near_singular_region",
+]
+CHALLENGE_FAMILY_TAGS = {family: index for index, family in enumerate(CHALLENGE_FAMILIES, start=1)}
+CHALLENGE_PER_FAMILY_PER_SPLIT = 5
+
+# Frozen-test seed revision for the random-challenge family -- a SEPARATE namespace from
+# frozen_core_seed_revision (which stays 4, spec section H.5). Locked to 1 before any frozen
+# challenge generation; frozen_test challenge path seeds and coefficient draws mix it in so the
+# frozen split can never coincide with development/validation content or with anything observed
+# while the challenge generator policy was being designed (spec section K frozen-test protocol).
+FROZEN_CHALLENGE_SEED_REVISION = 1
+FROZEN_CHALLENGE_SEED_REVISION_HISTORY = [
+    {
+        "revision": 1,
+        "status": "active",
+        "reason": (
+            "initial random-challenge frozen namespace, introduced with the Phase 6 challenge "
+            "generator. Regenerated frozen_test challenge data is only integrity / strict "
+            "reachability / checksum / count validated -- never used to tune families, envelopes, "
+            "seeds, acceptance policy or diversity policy."
+        ),
+    },
+]
 
 
 def generation_reachability_config() -> dict:
@@ -988,16 +1045,250 @@ def trajectory_config() -> dict:
     }
 
 
-def random_challenge_config() -> dict:
+def _challenge_family_definitions() -> Dict[str, dict]:
+    """Machine-readable definition of each locked challenge family (Phase 6).
+
+    Every family declares: the joint-space start REGION it draws from, the bounded-Fourier
+    harmonics and per-joint amplitude weights that shape its smooth joint-space reference curve,
+    an envelope margin fraction (the reference offset on each joint is capped at this fraction of
+    that joint's own start joint-limit margin, so the reference q stays inside operational limits
+    with no clipping and no kink), a per-split quota, a candidate-pool size for feasibility-aware
+    diversity selection, a curvature ceiling (finiteness/boundedness sanity, not a tuning knob),
+    and -- where relevant -- the acceptance predicate on the start state (near-limit / near-singular
+    neighbourhood, reusing the Phase 2.5 locked thresholds). Amplitude weights are length-7
+    (KR810 is 7-DOF); a zero weight suppresses a joint.
+    """
+    uniform = [1.0] * 7
     return {
-        "total": 90,
-        "split_sizes": {"development": 30, "validation": 30, "frozen_test": 30},
-        "trajectory_id_pattern": "challenge_{split}_{index:03d}",
-        "reachability_policy": (
-            "every control pose validated via sequential-DLS reachability "
-            "(generators/_trajectory_common.py::validate_sequential_reachability) before acceptance"
+        "smooth_random": {
+            "region": "interior",
+            "harmonics": [1, 2],
+            "joint_amplitude_weights": uniform,
+            "base_amplitude_rad": 0.30,
+            "envelope_margin_fraction": 0.90,
+            "max_mean_curvature_1_per_m": 20000.0,
+            "description": "general randomized smooth non-planar path, moderate amplitude on all joints (task section 4: randomized smooth path geometry + mixed curvature + non-planar)",
+        },
+        "mixed_curvature": {
+            "region": "interior",
+            "harmonics": [1, 2, 3],
+            "joint_amplitude_weights": uniform,
+            "base_amplitude_rad": 0.30,
+            "envelope_margin_fraction": 0.90,
+            "max_mean_curvature_1_per_m": 20000.0,
+            "description": "higher-harmonic joint motion producing mixed/higher curvature Cartesian paths (task section 4: mixed curvature)",
+        },
+        "non_planar": {
+            "region": "interior",
+            "harmonics": [1, 2],
+            "joint_amplitude_weights": [1.0, 1.0, 1.0, 1.0, 0.4, 0.4, 0.4],
+            "base_amplitude_rad": 0.35,
+            "envelope_margin_fraction": 0.90,
+            "max_mean_curvature_1_per_m": 20000.0,
+            "min_non_planarity": 0.02,
+            "min_non_planarity_note": (
+                "RMS distance of the canonical path from its own best-fit plane, normalized by the "
+                "path's bounding-box diagonal; enforced so the family is genuinely 3-D, not a "
+                "near-planar curve"
+            ),
+            "description": "deliberately non-planar paths (proximal-joint-weighted) (task section 4: non-planar path)",
+        },
+        "large_orientation": {
+            "region": "interior",
+            "harmonics": [1, 2],
+            "joint_amplitude_weights": [0.15, 0.15, 0.20, 0.35, 1.0, 1.0, 1.0],
+            "base_amplitude_rad": 0.50,
+            "envelope_margin_fraction": 0.90,
+            "max_mean_curvature_1_per_m": 20000.0,
+            "min_angular_displacement_rad": 0.30,
+            "description": "wrist-weighted motion producing stronger (but valid) end-effector orientation variation (task section 4: stronger orientation variation)",
+        },
+        "near_limit_region": {
+            "region": "near_limit",
+            "harmonics": [1, 2],
+            "joint_amplitude_weights": uniform,
+            "base_amplitude_rad": 0.25,
+            "envelope_margin_fraction": 0.90,
+            "max_mean_curvature_1_per_m": 20000.0,
+            "start_predicate": {
+                "metric": "normalized_joint_limit_margin",
+                "max_inclusive": NEAR_JOINT_LIMIT_NORMALIZED_MARGIN_THRESHOLD,
+                "source": "configs/difficulty_thresholds.json:near_joint_limit (Phase 2.5 locked)",
+            },
+            "description": "paths whose start state is in the near-joint-limit neighbourhood (task section 4: near-limit neighbourhood); the envelope keeps the whole path near that limit without ever violating it",
+        },
+        "near_singular_region": {
+            "region": "near_singular",
+            "harmonics": [1, 2],
+            "joint_amplitude_weights": uniform,
+            "base_amplitude_rad": 0.25,
+            "envelope_margin_fraction": 0.90,
+            "max_mean_curvature_1_per_m": 20000.0,
+            "start_predicate": {
+                "metric": "sigma_min",
+                "max_inclusive": NEAR_SINGULARITY_SIGMA_MIN_THRESHOLD,
+                "source": "configs/difficulty_thresholds.json:near_singularity (Phase 2.5 locked)",
+            },
+            "description": "paths whose start state is in the near-singular neighbourhood (task section 4: near-singular neighbourhood); remains numerically solvable by the existing DLS engine",
+        },
+    }
+
+
+def random_challenge_config() -> dict:
+    """Phase 6 [LOCKED] random-challenge trajectory policy (spec section I).
+
+    Counts (90, split 30/30/30, 400 canonical waypoints each) were locked in Phase 0. This phase
+    locks the *generation* policy the section-I `[PROVISIONAL]` note left open: challenge families,
+    per-family/per-split allocation, seed namespace, start-state (independent-reachable-start)
+    policy, the smooth joint-space reference-family geometry, the feasibility-aware diversity
+    selection, and the acceptance policy. No core-style Cartesian scale gate is invented -- challenge
+    acceptance is defined by strict independent-FK reachability plus the bounded joint-space
+    envelope, not by a scale factor on a nominal Cartesian shape.
+    """
+    families = _challenge_family_definitions()
+    return {
+        "total": CHALLENGE_TOTAL,
+        "split_sizes": dict(CHALLENGE_SPLIT_SIZES),
+        "canonical_waypoints_per_trajectory": CHALLENGE_CANONICAL_WAYPOINTS,
+        "source_waypoint_count_nominal": CHALLENGE_SOURCE_WAYPOINTS_NOMINAL,
+        "source_waypoint_count_note": (
+            "> 400 (task section 6) so arc-length canonical resampling has a fine source path; "
+            "overridable via --source-waypoints for tests/smoke only, never for the locked "
+            "400-canonical-waypoint output."
         ),
-        "status": "counts_locked_generation_not_implemented",
+        "duration_s": CHALLENGE_DURATION_S,
+        "quaternion_order": "wxyz",
+        "trajectory_id_pattern": "challenge_{split}_{index:03d}",
+        "family_index_note": (
+            "within each split the 30 trajectories are laid out family-block by family-block in the "
+            "locked family order, so indices 000-004 are the first family, 005-009 the second, etc.; "
+            "challenge_family is recorded explicitly in every record regardless."
+        ),
+        "families": list(CHALLENGE_FAMILIES),
+        "family_tags": dict(CHALLENGE_FAMILY_TAGS),
+        "per_family_per_split": CHALLENGE_PER_FAMILY_PER_SPLIT,
+        "allocation_rule": (
+            f"{len(CHALLENGE_FAMILIES)} families x {CHALLENGE_PER_FAMILY_PER_SPLIT} per split x "
+            f"{len(SPLITS)} splits = {CHALLENGE_TOTAL}; exactly "
+            f"{len(CHALLENGE_FAMILIES) * CHALLENGE_PER_FAMILY_PER_SPLIT} per split (30/30/30). "
+            "Deterministic and fixed before frozen generation; never adjusted after seeing results."
+        ),
+        "family_definitions": families,
+        "generation_mechanism": {
+            "kind": "smooth_joint_space_reference_family_through_fk",
+            "start_state_policy": (
+                "independent reachable starts (NOT the 12 locked anchors -- avoids leaking anchor "
+                "identity and gives 90 diverse starts). Each start q is drawn from the family's "
+                "region pool, is within operational limits by construction, carries full FK/Jacobian "
+                "metadata (position, quaternion wxyz, sigma_min/sigma_max/condition_number, "
+                "normalized+absolute joint-limit margin, controlling joint), a content hash, and is "
+                "the exact first waypoint of its trajectory. For near_limit_region / "
+                "near_singular_region the start additionally satisfies the family's start_predicate "
+                "(Phase 2.5 thresholds)."
+            ),
+            "reference_curve": (
+                "q(s) = q_start + offset(s), offset_j(s) = scale_j * weight_j * "
+                "sum_k [a_kj*sin(pi*m_k*s) + b_kj*(1-cos(pi*m_k*s))] with harmonics m_k, seeded "
+                "coefficients a,b ~ U(-1,1)*base_amplitude, and scale_j = min(1, "
+                "envelope_margin_fraction * margin_j / max_s|weight_j*raw_j(s)|). offset_j(0)=0 so "
+                "q(0)=q_start exactly; |offset_j| <= envelope_margin_fraction*margin_j so q(s) stays "
+                "inside operational limits with no clipping (C-infinity smooth, bounded curvature, "
+                "finite velocity/acceleration by construction). Never per-waypoint white noise."
+            ),
+            "orientation_source": "forward kinematics of the joint reference curve (genuine, coupled position+orientation variation)",
+            "dual_representation": (
+                "high-resolution source (source_waypoint_count_nominal FK samples) + canonical "
+                "(400 waypoints) arc-length-resampled from the source via the SAME resampler as core "
+                "trajectories (dataset_v2/core_trajectory_generation.py::resample_canonical: "
+                "piecewise-linear position, SO(3) geodesic SLERP orientation, exact endpoints, no "
+                "quaternion sign flips)"
+            ),
+        },
+        "reachability_policy": (
+            "strict, DLS-baseline-independent (configs/generation_reachability_config.json, "
+            "1e-4 m / 0.01 deg): every source AND canonical waypoint must have a q_reference whose "
+            "independently recomputed FK reproduces the target pose within tolerance; the numerical "
+            "IK engine's success flag is never sufficient; no waypoint is ever skipped."
+        ),
+        "acceptance_policy": {
+            "no_core_scale_gate": (
+                "challenge trajectories are not scaled Cartesian shapes, so the core "
+                "minimum_core_accepted_scale=0.50 gate does not apply and is NOT reused here."
+            ),
+            "criteria": [
+                "start state within operational limits and (for near_* families) satisfying the family start_predicate",
+                "reference offset bounded by envelope_margin_fraction * per-joint start margin (within-limits by construction)",
+                "strict independent-FK reachability on all source and all canonical waypoints",
+                "finite, non-negative curvature with mean below the family max_mean_curvature_1_per_m",
+                "family-specific coverage floor where declared (non_planar min_non_planarity, large_orientation min_angular_displacement_rad)",
+            ],
+        },
+        "feasibility_aware_selection": {
+            "candidate_pool_size_per_family_per_split": 16,
+            "procedure": (
+                "for each (family, split): draw a seeded candidate pool (start state + reference "
+                "coefficients per candidate); coarse-probe strict reachability + family coverage "
+                "floors to screen eligible candidates; run deterministic greedy farthest-point "
+                "diversity selection over the feasible subset to pick exactly per_family_per_split; "
+                "then full-validate the selected candidates at full 400/source resolution. A "
+                "selected candidate that fails full validation is replaced deterministically by the "
+                "next feasible candidate (same pool), never by loosening reachability or counts."
+            ),
+            "coarse_probe_canonical_waypoints": 40,
+            "coarse_probe_source_waypoints": 121,
+            "diversity_features": [
+                "start joint-space configuration (7d)",
+                "canonical workspace centroid (3d)",
+                "arc length (1d)",
+                "cumulative angular displacement (1d)",
+                "mean curvature (1d)",
+                "non-planarity (1d)",
+                "start sigma_min (1d)",
+                "start normalized joint-limit margin (1d)",
+            ],
+            "diversity_note": (
+                "greedy farthest-point (max-min) over the normalized composite feature vector, "
+                "reusing dataset_v2/anchor_generation.py::greedy_farthest_point_select; never a "
+                "plain first-N cut, never a DLS/solver outcome"
+            ),
+        },
+        "seed_policy": {
+            "component_tag": SEED_COMPONENT_TAGS["random_challenge"],
+            "split_tags": dict(SEED_SPLIT_TAGS),
+            "derivation": (
+                "challenge component seed = derive_seed(master_seed, 50); per (family, split): "
+                "family_split_seed = derive_seed(component_seed, family_tag, split_tag[, "
+                "frozen_challenge_seed_revision if split==frozen_test]); per candidate: "
+                "derive_seed(family_split_seed, candidate_index). Split isolation is guaranteed by "
+                "the distinct split_tag; frozen isolation additionally mixes in "
+                "frozen_challenge_seed_revision."
+            ),
+            "frozen_challenge_seed_revision": FROZEN_CHALLENGE_SEED_REVISION,
+            "frozen_challenge_seed_revision_history": [dict(e) for e in FROZEN_CHALLENGE_SEED_REVISION_HISTORY],
+            "frozen_core_seed_revision_unchanged": FROZEN_CORE_SEED_REVISION,
+        },
+        "anti_leakage_dimensions": [
+            "trajectory_id",
+            "trajectory_content_hash",
+            "path_seed",
+            "start_state_q_exact",
+            "start_state_q_near_duplicate",
+            "canonical_path_hash",
+            "source_path_hash",
+            "near_duplicate_path_metrics",
+            "no_duplicate_with_core_trajectory",
+        ],
+        "near_duplicate_tolerance": {
+            "start_joint_space_rad": 0.05,
+            "path_metric_relative": 0.01,
+            "policy": (
+                "two challenge trajectories in different splits whose start q are within "
+                "start_joint_space_rad AND whose normalized path-metric vectors are within "
+                "path_metric_relative fail generation loudly; a challenge trajectory sharing a "
+                "content hash with any core trajectory also fails."
+            ),
+        },
+        "status": "counts_and_policy_locked_generation_implemented",
     }
 
 

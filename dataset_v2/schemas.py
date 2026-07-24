@@ -349,6 +349,107 @@ def trajectory_schema() -> dict:
     }
 
 
+CHALLENGE_FAMILY_ENUM = [
+    "smooth_random",
+    "mixed_curvature",
+    "non_planar",
+    "large_orientation",
+    "near_limit_region",
+    "near_singular_region",
+]
+
+
+def challenge_trajectory_schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "challenge_trajectory_schema.json",
+        "title": "Dataset v2 Random Challenge Trajectory Manifest Record",
+        "description": (
+            "One challenge_trajectory_manifest.csv row (Phase 6): a random-challenge trajectory "
+            "generated from a smooth seeded joint-space reference family through FK. Records "
+            "family/split, independent-reachable-start metadata, dual-representation counts, "
+            "geometry diagnostics (arc length, angular displacement, curvature, non-planarity), "
+            "strict reachability evidence, and checksums."
+        ),
+        "type": "object",
+        "required": [
+            "trajectory_id",
+            "family",
+            "challenge_family",
+            "split",
+            "source_seed",
+            "path_seed",
+            "source_waypoint_count",
+            "canonical_waypoint_count",
+            "quaternion_convention",
+            "duration_s",
+            "canonical_control_period_s",
+            "start_content_hash",
+            "arc_length_m",
+            "cumulative_angular_displacement_rad",
+            "mean_curvature_1_per_m",
+            "max_curvature_1_per_m",
+            "non_planarity",
+            "reachability_status",
+            "reachability_tolerance_position_m",
+            "reachability_tolerance_orientation_deg",
+            "canonical_waypoints_reachable",
+            "source_waypoints_reachable",
+            "generation_status",
+            "content_hash",
+            "sha256",
+            "source_sha256",
+        ],
+        "properties": {
+            "trajectory_id": {"type": "string", "pattern": "^challenge_(development|validation|frozen_test)_[0-9]{3}$"},
+            "family": {"type": "string", "const": "random_challenge"},
+            "challenge_family": {"type": "string", "enum": CHALLENGE_FAMILY_ENUM},
+            "split": {"type": "string", "enum": SPLIT_ENUM},
+            "family_candidate_index": {"type": "integer", "minimum": 0},
+            "source_seed": {"type": "integer"},
+            "path_seed": {"type": "integer"},
+            "frozen_challenge_seed_revision": {"type": "integer", "minimum": 1},
+            "source_waypoint_count": {"type": "integer", "minimum": 401},
+            "canonical_waypoint_count": {"type": "integer", "const": 400},
+            "quaternion_convention": {"type": "string", "const": "wxyz"},
+            "duration_s": {"type": "number", "exclusiveMinimum": 0},
+            "canonical_control_period_s": {"type": "number", "exclusiveMinimum": 0},
+            "start_position": {"type": "string"},
+            "start_sigma_min": {"type": "number", "minimum": 0},
+            "start_sigma_max": {"type": "number", "minimum": 0},
+            "start_condition_number": {"type": "number", "minimum": 0},
+            "start_normalized_limit_margin": {"type": "number"},
+            "start_absolute_limit_margin_rad": {"type": "number"},
+            "start_controlling_joint_index": {"type": "integer", "minimum": 0, "maximum": 6},
+            "start_content_hash": {"type": "string", "pattern": SHA256_PATTERN},
+            "envelope_margin_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+            "harmonics_json": {"type": "string"},
+            "geometry_parameters_json": {"type": "string"},
+            "arc_length_m": {"type": "number", "minimum": 0},
+            "cumulative_angular_displacement_rad": {"type": "number", "minimum": 0},
+            "mean_curvature_1_per_m": {"type": "number", "minimum": 0},
+            "max_curvature_1_per_m": {"type": "number", "minimum": 0},
+            "non_planarity": {"type": "number", "minimum": 0},
+            "reachability_status": {"type": "string", "enum": ["validated", "incomplete"]},
+            "reachability_tolerance_position_m": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.006},
+            "reachability_tolerance_orientation_deg": {"type": "number", "exclusiveMinimum": 0, "maximum": 10.0},
+            "canonical_position_reconstruction_max_m": {"type": "number", "minimum": 0},
+            "canonical_orientation_reconstruction_max_deg": {"type": "number", "minimum": 0},
+            "source_position_reconstruction_max_m": {"type": "number", "minimum": 0},
+            "source_orientation_reconstruction_max_deg": {"type": "number", "minimum": 0},
+            "canonical_waypoints_reachable": {"type": "integer", "minimum": 0},
+            "source_waypoints_reachable": {"type": "integer", "minimum": 0},
+            "generation_status": {"type": "string", "enum": ["development"]},
+            "model_fingerprint": {"type": "string"},
+            "config_fingerprint": {"type": "string"},
+            "content_hash": {"type": "string", "pattern": SHA256_PATTERN},
+            "sha256": {"type": "string", "pattern": SHA256_PATTERN},
+            "source_sha256": {"type": "string", "pattern": SHA256_PATTERN},
+        },
+        "additionalProperties": False,
+    }
+
+
 def trial_schema() -> dict:
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -453,6 +554,7 @@ def all_schemas() -> Dict[str, dict]:
         "tier0_state_schema.json": tier0_state_schema(),
         "point_ik_schema.json": point_ik_schema(),
         "trajectory_schema.json": trajectory_schema(),
+        "challenge_trajectory_schema.json": challenge_trajectory_schema(),
         "trial_schema.json": trial_schema(),
         "validation_report_schema.json": validation_report_schema(),
         "checksum_manifest_schema.json": checksum_manifest_schema(),

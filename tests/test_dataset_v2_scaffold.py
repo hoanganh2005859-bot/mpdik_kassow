@@ -185,7 +185,7 @@ def test_evaluation_defaults_are_not_invented(v2_root):
 def test_schemas_are_all_valid_draft202012(v2_root):
     paths = create_dataset_v2_scaffold(v2_root, master_seed=MASTER_SEED)
     schema_files = sorted(paths.schemas_dir.glob("*.json"))
-    assert len(schema_files) == 9
+    assert len(schema_files) == 10
     for path in schema_files:
         schema = json.loads(path.read_text(encoding="utf-8"))
         jsonschema.Draft202012Validator.check_schema(schema)

@@ -455,15 +455,70 @@ trajectory.
   validation before acceptance — reuse
   `generators/_trajectory_common.py::validate_sequential_reachability`/
   `generate_validated_geometry` unchanged).
-- **[PROVISIONAL]** Interpolation policy: random challenge trajectories interpolate between
-  randomly drawn, individually-validated control poses using the same quintic time-scaling +
-  canonical/high-resolution dual representation as core trajectories (section H), so downstream
-  consumers see one consistent trajectory schema regardless of family.
 - **[LOCKED]** Random path seeds are split-isolated (a `development` challenge trajectory's path
   seed must never equal, or be derivable in a way that collides with, a `validation`/
   `frozen_test` one — see section K).
 - Source/canonical representation: identical dual-representation requirement as core trajectories
   (section H).
+
+### I.1 Locked generation policy [LOCKED by Phase 6]
+
+Phase 0 left the challenge *generation* policy `[PROVISIONAL]` (only the 90/30-30-30/400 counts were
+locked). Phase 6 locks it. The initial `[PROVISIONAL]` note proposed interpolating between randomly
+drawn Cartesian control poses; Phase 6 instead adopts a **smooth joint-space reference family
+through FK**, which is strictly stronger on the one property the counts depend on — reachability —
+and is fully machine-readable in `configs/random_challenge_config.json`
+(`status: counts_and_policy_locked_generation_implemented`).
+
+- **[LOCKED] Generation mechanism.** Unlike core trajectories (Cartesian closed-form shapes anchored
+  at the 12 locked anchors), each challenge trajectory is generated from an **independent reachable
+  start state** (never one of the 12 anchors — avoids leaking anchor identity and yields 90 diverse
+  starts) followed by a bounded-Fourier joint-space curve
+  `q(s) = q_start + offset(s)`, `offset_j(s) = scale_j·weight_j·Σ_k[a_kj·sin(π·m_k·s) +
+  b_kj·(1−cos(π·m_k·s))]`, with `offset_j(0)=0` (so `q(0)=q_start` exactly) and
+  `scale_j = min(1, envelope_margin_fraction · margin_j / max_s|weight_j·raw_j(s)|)`. Because each
+  joint's amplitude is capped at a fraction of that joint's own start joint-limit margin, the whole
+  reference stays inside operational limits with no clipping (C-∞ smooth, bounded curvature, finite
+  velocity/acceleration), and every source pose = FK(q(s)) is reachable by construction. This is a
+  "known-reachable joint-space reference family converted through FK": no per-waypoint white noise.
+  Orientation is the genuine FK orientation of the joint curve (coupled position+orientation
+  variation).
+- **[LOCKED] Reachability.** The Phase 5.1/5.4 strict, DLS-baseline-independent engine
+  (`configs/generation_reachability_config.json`, 1e-4 m / 0.01 deg) verifies **every** source and
+  canonical waypoint by independent FK reconstruction; the numerical IK engine's `success` flag is
+  never sufficient and no waypoint is ever skipped. (The Phase-0 pointer to v1's
+  `validate_sequential_reachability` is superseded by this stricter, independent check — the earlier
+  bullet above is kept for historical continuity but the strict engine governs.)
+- **[LOCKED] Six challenge families**, 5 per split × 3 splits = 15 each (6 × 15 = 90):
+  `smooth_random`, `mixed_curvature`, `non_planar`, `large_orientation`, `near_limit_region`,
+  `near_singular_region` — targeting the coverage aspects approved for going beyond the 120 core
+  paths (randomized smooth geometry, mixed curvature, non-planar paths, stronger orientation
+  variation, near-limit and near-singular neighbourhoods). Each family has a machine-readable region,
+  harmonic set, per-joint amplitude weights, envelope fraction, curvature ceiling, coverage floor
+  (where relevant), seed tag, and per-split quota. `near_limit_region`/`near_singular_region` start
+  states additionally satisfy the Phase 2.5 locked `near_joint_limit`/`near_singularity` thresholds.
+- **[LOCKED] Acceptance policy.** No core-style Cartesian scale gate applies (challenge paths are not
+  scaled Cartesian shapes). Acceptance = start-state validity (+ family start predicate where
+  declared) + within-limits bounded envelope + strict independent-FK reachability on all source and
+  canonical waypoints + finite bounded curvature + the family coverage floors
+  (`non_planar` min non-planarity, `large_orientation` min angular displacement).
+- **[LOCKED] Feasibility-aware diversity selection.** Per (family, split): a seeded candidate pool
+  (16) is coarse-probe screened for strict reachability + coverage floors; the feasible subset is
+  diversity-selected (greedy farthest-point over joint-space/workspace/arc-length/angular/curvature/
+  non-planarity/σ_min/margin features, reusing `greedy_farthest_point_select`) down to the quota;
+  the selected candidates are re-validated at full 400/source resolution; a full-validation failure
+  is replaced deterministically from the same pool — never by loosening reachability, counts, or the
+  family policy.
+- **[LOCKED] Frozen-challenge seed revision** (`configs/seed_policy.json:
+  frozen_challenge_seed_revision`, initial value **1**) — a **separate** namespace from
+  `frozen_core_seed_revision` (which stays **4**, unchanged). `frozen_test` challenge path seeds and
+  coefficient draws mix it in; `development`/`validation` use the unrevised namespace. Locked before
+  any frozen challenge generation; never rerolled to find an easier frozen set.
+- **[LOCKED] Source/canonical dual representation** identical to core: source resolution
+  `source_waypoint_count_nominal = 1201` (> 400), canonical = 400 waypoints arc-length-resampled from
+  the source via the same `resample_canonical` (piecewise-linear position, SO(3) geodesic SLERP
+  orientation, exact endpoints, sign-continuous quaternions). Challenge paths are open (no closure
+  requirement).
 
 ## J. Trial policy [LOCKED]
 
