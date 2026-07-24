@@ -2014,3 +2014,142 @@ random-challenge trajectories, spec section J), reusing the strict reachability 
 independent-start construction introduced here; the trial `q_initial` must be constructed only
 against each trajectory's first canonical waypoint pose (never a future waypoint's solution, spec
 section J).
+
+## Phase 7 -- Combined trajectory catalog, public/protected loaders, trial generator/validator, CLI
+
+- **Status**: COMPLETE. Trials only -- no DLS evaluation, no Tier 1-4 evaluation, no official
+  release.
+- **Baseline before this phase**: branch `feature/dataset-v2`, commit `ca516d69`, clean working
+  tree, `pytest -q` -> **721 passed**, 0 failed/skipped/errored (full run this phase, 44 min on this
+  machine). Locked inputs carried in unchanged: stable seed algorithm `dataset_v2/seed/sha256/v1`,
+  `frozen_core_seed_revision = 4`, `frozen_challenge_seed_revision = 1`.
+
+### Persistent working dataset root
+
+Phase 7 uses an explicit **persistent working root outside the repository**:
+`D:\data\hoang_anh\mpdik_kassow_v2_work` (passed via `--dataset-root`, never hard-coded in source).
+It is a **development working dataset**, NOT an official release and never called frozen/final. It
+is not in Git and no generated NPZ/CSV/JSON is committed. It is retained at the end of Phase 7 (Phase
+8 will reuse it) and carries full config/model/seed fingerprints. The full 210-trajectory input
+(scaffold + Tier 0 1000/1000/600 + Point-IK 6,000 + 12 anchors + 120 core / 48,000 canonical poses +
+90 challenge / 36,000 canonical poses) was generated at master seed 42 and validated before any trial
+was produced; the combined catalog confirms **210 trajectories / 84,000 canonical poses**.
+
+### Locked trial generation policy (spec section J.1)
+
+- **Combined catalog** (`dataset_v2/trajectory_catalog.py`): deterministic 210-row union of the
+  core (120) and challenge (90) per-family manifests ->
+  `trajectories/combined_trajectory_manifest.csv`, dataset-root-relative paths, hashes,
+  model/config/seed fingerprints, frozen-revision fields. An independent validator checks the exact
+  union (no duplicate/missing, 70/70/70 split, 120 core / 90 challenge, referenced NPZ present,
+  paths relative).
+- **Public vs protected loaders** (`dataset_v2/trajectory_loading.py`): the public loader strips all
+  protected arrays (`q_reference`, `q_source_reference`, reconstruction errors, reachability flags)
+  and provably cannot return `q_reference`; the protected loader (generation/validation/diagnostics
+  only) exposes `q_reference`/`q_reference_start`. Tests prove the isolation both at the trajectory
+  loader level and at the trial NPZ level (public `trials/<split>.npz` carries no protected key; the
+  protected evidence lives under `trials/protected/`).
+- **q_initial candidate pool** (`dataset_v2/trial_candidates.py`): per trajectory a deterministic
+  1,400-candidate mixture (500 interior + 300 near-limit + 300 singularity-biased + 300 stratified)
+  drawn ONLY from the operational joint limits, reusing Tier 0's sampling constructions unchanged.
+  Seeds derive from `dataset_v2/seeds.py` under the `trials` component tag (60) + trajectory content
+  hash (+ frozen family/trial revisions for frozen_test); no global `numpy.random`, no dependence on
+  `q_reference`, no DLS.
+- **Difficulty** (`configs/trial_config.json` `difficulty` block, `status: locked`): primary metric
+  = combined normalized first-target pose error (position/scale + orientation-geodesic/scale, 50/50);
+  non-overlapping easy/medium/hard bands with guard gaps. Calibrated on the 70 **development**
+  trajectories only (98,000 candidates, seed 42) -- see `docs/V2_TRIAL_DIFFICULTY_CALIBRATION.md`;
+  numbers baked into `dataset_v2/config_templates.py` `TRIAL_*` constants exactly as Phase 2.5's
+  calibration. Scales `position 0.93567 m` / `orientation 2.30143 rad`; bands `easy<=0.86012`,
+  `medium in [0.92454, 1.04624]`, `hard>=1.11268`; minimum inter-level separation `0.06441`.
+- **Selection**: one representative per band, the in-band candidate closest to the band median
+  (never the most-trivial), tie-broken by lowest index; a trajectory that cannot populate a band
+  fails the run.
+- **Frozen trial seed revision** = 1 (SEPARATE namespace from frozen_core=4 / frozen_challenge=1),
+  locked before frozen generation.
+
+### Files added/modified
+
+- **New**: `dataset_v2/trajectory_catalog.py`, `dataset_v2/trajectory_loading.py`,
+  `dataset_v2/trial_candidates.py`, `dataset_v2/trial_calibration.py`,
+  `dataset_v2/trial_generation.py`, `dataset_v2/trial_validation.py`;
+  `pipelines/run_dataset_v2_combined_catalog.py`,
+  `pipelines/run_dataset_v2_trial_calibration.py`, `pipelines/run_dataset_v2_trial_generation.py`;
+  `tests/_dataset_v2_trial_helpers.py`, `tests/test_dataset_v2_trajectory_catalog.py`,
+  `tests/test_dataset_v2_trial_generation.py`; `docs/V2_TRIAL_DIFFICULTY_CALIBRATION.md`.
+- **Modified** (extended, not rewritten): `dataset_v2/config_templates.py` (trial constants +
+  `TRIAL_*` difficulty thresholds + `FROZEN_TRIAL_SEED_REVISION`; full `trial_config()`;
+  `frozen_trial_seed_revision` in `seed_policy_config`); `dataset_v2/schemas.py` (full
+  `trial_schema()`); `dataset_v2/manifest.py` (`apply_trial_generation_status`);
+  `specs/DLS_DATASET_V2_SPEC.md` (section J.1).
+
+### Full persistent run (master seed 42, working root, retained)
+
+- Combined catalog: **210 rows** (120 core + 90 challenge), 70/70/70 split, validator `passed=True`,
+  84,000 canonical poses.
+- Trial calibration (development only): 70 trajectories, 98,000 candidates; every development
+  trajectory populates all three bands (min hard-band count 79/1,400).
+- Trial generation: **~2.6 min** -> **630 trials**; split **210/210/210**; difficulty
+  **easy/medium/hard = 210/210/210**; **70/70/70 per difficulty per split**; family **core 360 /
+  random_challenge 270**; exactly 3 per trajectory, one easy/medium/hard each.
+- Independent validation (`--validate-only`): `total=630 ... catalog_passed=True passed=True`.
+  Recompute disagreements: FK position error and primary metric both `< 1e-6`. Checksum manifest
+  mismatches **0**. Trial anti-leakage `pass=true`, 0 collisions.
+- Difficulty separation: primary-metric monotonic (`easy<medium<hard`) for **all 210** trajectories;
+  observed minimum separation 0.215 (easy->medium) / 0.159 (medium->hard), both above the configured
+  0.06441 floor. Secondary single-axis orderings (not required monotonic): position 208/210,
+  orientation 184/210.
+- Isolation: public `trials/<split>.npz` carries no protected array; every `q_initial` differs from
+  the protected `q_reference_start` and from every `q_reference` waypoint; protected reference hashes
+  recompute.
+- No NPZ/CSV/JSON committed; working root retained for Phase 8.
+
+### Tests
+
+- New: `tests/test_dataset_v2_trajectory_catalog.py` (8) + `tests/test_dataset_v2_trial_generation.py`
+  (19) = **27 tests** (combined-catalog union/validation/duplicate-detection; public loader hides
+  `q_reference`; protected loader reads it; CWD independence; 3-per-trajectory + split/difficulty/
+  family distribution; independent validator pass; split inheritance; q_initial within limits and
+  independent of `q_reference`; public NPZ has no protected arrays while evidence does; NPZ
+  `allow_pickle=False`; FK metadata recomputation; monotonicity; difficulty-band classification;
+  unique ids/hashes; anti-leakage report; schema validation; determinism same-seed + sensitivity to
+  seed; overwrite protection; dry-run writes nothing; Dataset v1 untouched; frozen trial revision
+  locked; validator detects an out-of-limit `q_initial`; calibration development-only + deterministic).
+- Targeted: `pytest tests/test_dataset_v2_trajectory_catalog.py tests/test_dataset_v2_trial_generation.py -q`
+  -> **27 passed** (~20 s). Scaffold/root-resolution regression
+  (`tests/test_dataset_v2_scaffold.py tests/test_dataset_root_resolution.py`) -> **37 passed**.
+- Full suite: `pytest -q` -> **748 passed** (721 baseline + 27 new), 0 failed/skipped/errored.
+
+### Confirmations
+
+- Dataset v1: **not modified**. `git status --short` restricted to `VERSION`,
+  `DATASET_MANIFEST.json`, `benchmarks/`, `trajectories/`, `configs/`, `schemas/`, `kinematics/`,
+  `algorithms/`, `generators/`, `evaluation/`, `assets/` returns zero files. Only `dataset_v2/`
+  (config_templates/manifest/schemas modified; six new modules), `pipelines/` (three new CLIs),
+  `tests/` (three new files), `specs/`, `docs/` touched. HEAD unchanged `ca516d69`; nothing
+  committed or pushed.
+- Nothing locked weakened: 12 anchors, 120 core trajectories, 90 challenge trajectories, seed
+  algorithm, `frozen_core_seed_revision=4`, `frozen_challenge_seed_revision=1`, FK/Jacobian/SO(3)/
+  DLS/adaptive damping -- all unchanged. `q_reference` was never used as/for `q_initial`; no DLS was
+  run; no Tier 1-4 evaluation; no PPO/MPDIK/MAPPO; frozen_test was only integrity/count/
+  classification/monotonicity/checksum validated, never used to calibrate or tune.
+- The persistent working root is a **development working dataset**, not an official release.
+
+### Phase 7 final status: **COMPLETE**
+
+Persistent working dataset root exists; combined catalog = 210 / 84,000 canonical poses; 630/630
+trials with exact split (210/210/210), difficulty (210/210/210) and per-difficulty-per-split
+(70/70/70) counts, and family (core 360 / challenge 270); `q_initial` valid and independent of
+`q_reference` generation; difficulty classification and primary-metric monotonicity pass;
+public/protected isolation passes; combined-catalog/schema/checksum/manifest pass; anti-leakage
+passes; frozen trial revision = 1; all tests pass; Dataset v1 unchanged; nothing committed or
+pushed.
+
+### Recommended Phase 8
+
+With the 210-trajectory / 630-trial working dataset locked and validated, Phase 8 can lock the
+Dataset v2 **evaluation config** (acceptance thresholds, currently `configs/evaluation_defaults.json`
+= `not_yet_defined`) and run the DLS baseline evaluation over Tier 1-4 -- designing and locking that
+config against `development`/`validation` only, then running `frozen_test` exactly once after the
+config is recorded/checksummed (spec section K frozen-test protocol). No generator, threshold, or
+seed policy from Phases 0-7 should change.

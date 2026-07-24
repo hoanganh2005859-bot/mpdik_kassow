@@ -175,6 +175,15 @@ def seed_policy_config(master_seed: int) -> dict:
         "frozen_core_seed_revision_history": [dict(entry) for entry in FROZEN_CORE_SEED_REVISION_HISTORY],
         "frozen_challenge_seed_revision": FROZEN_CHALLENGE_SEED_REVISION,
         "frozen_challenge_seed_revision_history": [dict(entry) for entry in FROZEN_CHALLENGE_SEED_REVISION_HISTORY],
+        "frozen_trial_seed_revision": FROZEN_TRIAL_SEED_REVISION,
+        "frozen_trial_seed_revision_history": [dict(entry) for entry in FROZEN_TRIAL_SEED_REVISION_HISTORY],
+        "frozen_trial_seed_policy": (
+            "Phase 7: frozen_test trial candidate-pool seeds mix in frozen_trial_seed_revision (a "
+            "SEPARATE namespace from frozen_core_seed_revision=4 and frozen_challenge_seed_revision=1) "
+            "together with the trajectory's own frozen family revision. development/validation trials "
+            "use the unrevised namespace. Locked before frozen trial generation; never rerolled to "
+            "find an easier frozen set."
+        ),
         "frozen_challenge_seed_policy": (
             "Phase 6: random-challenge frozen_test path seeds and coefficient draws mix in "
             "frozen_challenge_seed_revision (a SEPARATE namespace from frozen_core_seed_revision, "
@@ -468,6 +477,69 @@ FROZEN_CHALLENGE_SEED_REVISION_HISTORY = [
         ),
     },
 ]
+
+# --- Trial policy (Phase 7, spec section J) ---------------------------------------------------
+# 210 trajectories x 3 init classes (easy/medium/hard) = 630 trials. Each trial's q_initial is
+# drawn INDEPENDENTLY from the operational joint limits (never from the trajectory's protected
+# q_reference), classified only against the trajectory's FIRST canonical target pose.
+TRIAL_INIT_CLASSES = ["easy", "medium", "hard"]
+TRIAL_INIT_CLASS_TAGS = {"easy": 1, "medium": 2, "hard": 3}
+TRIALS_PER_TRAJECTORY = 3
+TRIAL_TOTAL = 630
+
+# Frozen-test seed revision for TRIALS -- a SEPARATE namespace from frozen_core_seed_revision (4)
+# and frozen_challenge_seed_revision (1), locked before any frozen trial generation. frozen_test
+# trials mix this (plus the trajectory's own frozen family revision) into their per-trajectory
+# candidate-pool seed so the frozen trial set can never coincide with development/validation
+# content or with anything observed while the trial policy was being calibrated.
+FROZEN_TRIAL_SEED_REVISION = 1
+FROZEN_TRIAL_SEED_REVISION_HISTORY = [
+    {
+        "revision": 1,
+        "status": "active",
+        "reason": (
+            "initial trial frozen namespace, introduced with the Phase 7 trial generator. "
+            "Difficulty thresholds were calibrated on DEVELOPMENT trajectories only; frozen_test "
+            "trials are only integrity / count / classification / monotonicity / checksum "
+            "validated -- never used to calibrate thresholds, tune candidate policy, change the "
+            "minimum separation, tune the selection score, or run DLS."
+        ),
+    },
+]
+
+# Trial candidate-pool policy: a deterministic mixture of four sub-pools per trajectory (task
+# section 7). Sizes are the full-mode defaults (tests override with a much smaller pool).
+TRIAL_POOL_INTERIOR = 500
+TRIAL_POOL_NEAR_LIMIT = 300
+TRIAL_POOL_SINGULAR = 300
+TRIAL_POOL_STRATIFIED = 300
+TRIAL_POOL_INTERIOR_MARGIN_FRACTION = 0.02
+TRIAL_STRATIFIED_MARGIN_FRACTION = 0.02
+
+# Trial difficulty definition (Phase 7 calibration, docs/V2_TRIAL_DIFFICULTY_CALIBRATION.md).
+# PRIMARY metric = a combined NORMALIZED first-target pose error (position + orientation), never
+# normalized joint distance alone (spec/task section 9: KR810 is redundant, so many q map to nearly
+# the same pose). Both terms are divided by a calibration scale (the median pooled error over the
+# development candidate pools) so neither unit dominates, then combined 50/50.
+TRIAL_PRIMARY_METRIC = "combined_normalized_first_target_pose_error"
+TRIAL_POSITION_WEIGHT = 0.5
+TRIAL_ORIENTATION_WEIGHT = 0.5
+# The three [LOCKED] numbers below are the output of dataset_v2.trial_calibration.calibrate run on
+# the DEVELOPMENT trajectory catalog at master seed 42 (see docs/V2_TRIAL_DIFFICULTY_CALIBRATION.md).
+TRIAL_CALIBRATION_SEED = 42
+TRIAL_POSITION_SCALE_M = 0.9356705199958848
+TRIAL_ORIENTATION_SCALE_RAD = 2.3014333912872837
+# Non-overlapping easy/medium/hard bands on the primary metric, with guard gaps (P30-P40, P60-P70)
+# that guarantee easy < medium < hard by construction plus a positive minimum inter-level
+# separation. Values are the pooled percentiles of the combined metric over the 70 development
+# trajectories' candidate pools (98,000 candidates, master seed 42); every development trajectory
+# populates all three bands (min per-trajectory hard-band count 79). See
+# docs/V2_TRIAL_DIFFICULTY_CALIBRATION.md.
+TRIAL_EASY_UPPER = 0.8601239140675875
+TRIAL_MEDIUM_LOWER = 0.9245379046213449
+TRIAL_MEDIUM_UPPER = 1.0462350595875294
+TRIAL_HARD_LOWER = 1.1126783448821171
+TRIAL_DIFFICULTY_STATUS = "locked"
 
 
 def generation_reachability_config() -> dict:
@@ -1293,13 +1365,77 @@ def random_challenge_config() -> dict:
 
 
 def trial_config() -> dict:
+    minimum_separation = min(
+        TRIAL_MEDIUM_LOWER - TRIAL_EASY_UPPER,
+        TRIAL_HARD_LOWER - TRIAL_MEDIUM_UPPER,
+    )
     return {
-        "init_classes": list(INIT_CLASSES),
-        "trials_per_trajectory": 3,
+        "init_classes": list(TRIAL_INIT_CLASSES),
+        "init_class_tags": dict(TRIAL_INIT_CLASS_TAGS),
+        "trials_per_trajectory": TRIALS_PER_TRAJECTORY,
         "total_trajectories": 210,
-        "total_trials": 630,
+        "total_trials": TRIAL_TOTAL,
         "trial_id_pattern": "{trajectory_id}_trial_{init_class}",
-        "status": "counts_locked_generation_not_implemented",
+        "family_trial_counts": {"core": 360, "random_challenge": 270},
+        "split_trial_counts": {"development": 210, "validation": 210, "frozen_test": 210},
+        "difficulty_trial_counts": {"easy": 210, "medium": 210, "hard": 210},
+        "candidate_pool_policy": {
+            "note": (
+                "q_initial candidates are a deterministic mixture of four sub-pools drawn ONLY from "
+                "the operational joint limits -- global interior samples, limit-aware samples, "
+                "singularity-aware diagnostic samples, and stratified joint-space samples. The "
+                "pool never uses q_reference, never perturbs around q_reference, never uses a DLS "
+                "solution, and never uses a frozen evaluation result."
+            ),
+            "interior_samples": TRIAL_POOL_INTERIOR,
+            "near_limit_samples": TRIAL_POOL_NEAR_LIMIT,
+            "singular_samples": TRIAL_POOL_SINGULAR,
+            "stratified_samples": TRIAL_POOL_STRATIFIED,
+            "interior_margin_fraction": TRIAL_POOL_INTERIOR_MARGIN_FRACTION,
+            "stratified_margin_fraction": TRIAL_STRATIFIED_MARGIN_FRACTION,
+        },
+        "difficulty": {
+            "status": TRIAL_DIFFICULTY_STATUS,
+            "primary_metric": TRIAL_PRIMARY_METRIC,
+            "primary_metric_definition": (
+                "combined = position_weight * (initial_position_error_m / position_scale_m) + "
+                "orientation_weight * (initial_orientation_error_rad / orientation_scale_rad); "
+                "position error is Euclidean distance FK(q_initial)->first_target_position; "
+                "orientation error is the SO(3) geodesic angle FK(q_initial)->first_target_quaternion "
+                "(never an Euler-angle difference)."
+            ),
+            "position_weight": TRIAL_POSITION_WEIGHT,
+            "orientation_weight": TRIAL_ORIENTATION_WEIGHT,
+            "position_scale_m": TRIAL_POSITION_SCALE_M,
+            "orientation_scale_rad": TRIAL_ORIENTATION_SCALE_RAD,
+            "calibration_seed": TRIAL_CALIBRATION_SEED,
+            "calibration_source": (
+                "development trajectories only (never validation or frozen_test); "
+                "docs/V2_TRIAL_DIFFICULTY_CALIBRATION.md"
+            ),
+            "bands": {
+                "easy": {"primary_max_inclusive": TRIAL_EASY_UPPER},
+                "medium": {"primary_min_inclusive": TRIAL_MEDIUM_LOWER, "primary_max_inclusive": TRIAL_MEDIUM_UPPER},
+                "hard": {"primary_min_inclusive": TRIAL_HARD_LOWER},
+            },
+            "classification_priority": "primary metric band membership; a candidate in a guard gap is unassigned",
+            "inclusivity": "band bounds are inclusive; guard gaps between bands are exclusive",
+            "minimum_inter_level_separation": minimum_separation,
+            "secondary_constraints": [
+                "diagnostic covariates (normalized joint distance to protected q_reference_start, "
+                "sigma_min, condition number, joint-limit margin) are recorded per trial but never "
+                "define the class; only the primary pose-error metric does.",
+            ],
+            "monotonicity_rule": "per trajectory the selected easy < medium < hard by the primary metric",
+        },
+        "reference_start_policy": (
+            "q_reference_start = q_reference[0] is PROTECTED evidence used only to confirm the "
+            "first target is reachable, compute diagnostic joint-distance covariates, and check "
+            "trial integrity. It is never used as q_initial, never perturbed into q_initial, never "
+            "seeds candidate generation, never a solver initial guess, and never exposed by the "
+            "public trial loader."
+        ),
+        "status": "counts_and_difficulty_locked_generation_implemented",
     }
 
 

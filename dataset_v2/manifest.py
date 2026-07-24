@@ -192,6 +192,36 @@ def apply_challenge_trajectory_generation_status(
     return updated
 
 
+def apply_trial_generation_status(
+    manifest: dict,
+    total_trials: int,
+    split_counts: dict,
+    difficulty_counts: dict,
+    family_counts: dict,
+    split_difficulty_counts: dict,
+    full_locked_counts: bool,
+) -> dict:
+    """Return a copy of ``manifest`` with ``counts.trials`` updated to the *actual* generated trial
+    counts (Phase 7). Never mutates dataset-wide ``generated``/``frozen``/``status`` (mirrors the
+    other ``apply_*`` helpers) -- trials being generated does not by itself flip the whole-dataset
+    flags.
+    """
+    updated = dict(manifest)
+    counts = dict(updated.get("counts", {}))
+    counts["trials"] = {
+        **dict(counts.get("trials", {})),
+        "total": int(total_trials),
+        "generated": True,
+        "full_locked_counts": bool(full_locked_counts),
+        "split_counts": dict(split_counts),
+        "difficulty_counts": dict(difficulty_counts),
+        "family_counts": dict(family_counts),
+        "split_difficulty_counts": {name: dict(value) for name, value in split_difficulty_counts.items()},
+    }
+    updated["counts"] = counts
+    return updated
+
+
 def apply_point_ik_generation_status(
     manifest: dict,
     total_samples: int,

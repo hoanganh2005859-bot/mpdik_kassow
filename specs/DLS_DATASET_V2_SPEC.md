@@ -532,6 +532,57 @@ and is fully machine-readable in `configs/random_challenge_config.json`
   only the trajectory's first target pose, analogous to v1's robustness-trial construction in
   `_trajectory_common.py::build_trials`, but without reusing any later-waypoint solution).
 
+### J.1 Locked trial generation policy [LOCKED by Phase 7]
+
+Phase 0 locked only the 630/3-per-trajectory counts and the no-future-leak rule; Phase 7 locks the
+rest, machine-readable in `configs/trial_config.json`
+(`status: counts_and_difficulty_locked_generation_implemented`).
+
+- **Combined trajectory catalog**: Phase 7 builds
+  `trajectories/combined_trajectory_manifest.csv` — the deterministic 210-row union of
+  `core_trajectory_manifest.csv` (120) and `challenge_trajectory_manifest.csv` (90), with
+  dataset-root-relative canonical/source paths, content/file hashes, model/config/seed fingerprints
+  and the applicable frozen revision. `dataset_v2/trajectory_catalog.py` validates the exact union
+  (no duplicate/missing row, 70/70/70 split, 120 core / 90 challenge).
+- **Public vs protected trajectory access** (`dataset_v2/trajectory_loading.py`): the canonical NPZ
+  carries both public geometry and the protected `q_reference`. The **public/evaluation** loader
+  returns only id/split/family, target poses, waypoint/time/path metadata and public geometry —
+  it provably cannot return `q_reference` or any reconstruction/reachability array. The
+  **protected/internal** loader (generation / validation / diagnostics only) may read `q_reference`
+  and `q_reference_start = q_reference[0]` but is never wired into a public API.
+- **Reference-start policy**: `q_reference_start` is used only to confirm the first target is
+  reachable, compute protected diagnostics, and check trial integrity. It is **never** used as
+  `q_initial`, perturbed into `q_initial`, used to seed candidate generation, used as a solver
+  initial guess, or exposed by the public trial loader. No future `q_reference` waypoint is used to
+  build a trial.
+- **q_initial candidate pool** (`dataset_v2/trial_candidates.py`): a deterministic mixture drawn
+  **only** from the operational joint limits — 500 global-interior + 300 limit-aware + 300
+  singularity-aware + 300 stratified joint-space samples per trajectory. Seeds derive from
+  `dataset_v2/seeds.py` under the `trials` component tag (60) and the trajectory content hash; no
+  global `numpy.random` state, no dependence on `q_reference`, no DLS.
+- **Primary difficulty metric** [LOCKED]: a **combined normalized first-target pose error**
+  (position + orientation, each divided by a calibration scale, combined 50/50) — never normalized
+  joint distance alone (the KR810 is redundant). Orientation uses the SO(3) geodesic angle, never
+  an Euler difference. Non-overlapping easy/medium/hard bands with guard gaps guarantee
+  `easy < medium < hard` per trajectory plus a positive minimum inter-level separation. Bands and
+  scales were calibrated on **development trajectories only** (never validation/frozen_test) and are
+  recorded in `docs/V2_TRIAL_DIFFICULTY_CALIBRATION.md` and `configs/trial_config.json`.
+- **Selection**: per trajectory, exactly one representative per band is chosen as the in-band
+  candidate whose primary metric is closest to that band's median (never the most-trivial
+  candidate), tie-broken by lowest index. A trajectory that cannot populate a band fails generation
+  (never widen the threshold, duplicate, use `q_reference`, or swap the trajectory).
+- **Trial data + protected evidence**: the public trial record (id/family/split/difficulty,
+  `q_initial`, FK pose, first target pose, pose-error + conditioning covariates, seeds, hashes) is
+  written per split under `trials/<split>.npz` + `trials/trial_manifest.csv`; the protected evidence
+  (`q_reference_start`, reference-FK consistency, protected reference content hash, diagnostic joint
+  distances) is written under `trials/protected/` and never read by the public trial loader. All
+  NPZ load with `allow_pickle=False`.
+- **Frozen trial seed revision** [LOCKED]: `frozen_trial_seed_revision = 1`, a SEPARATE namespace
+  from `frozen_core_seed_revision` (4) and `frozen_challenge_seed_revision` (1). frozen_test trial
+  candidate-pool seeds mix in the trajectory's own frozen family revision plus the frozen trial
+  revision; locked before frozen trial generation, never rerolled for an easier set, never used to
+  calibrate thresholds or tune selection.
+
 ## K. Split and anti-leakage policy [LOCKED]
 
 `development`, `validation`, and `frozen_test` must never share, across any pair of splits:
