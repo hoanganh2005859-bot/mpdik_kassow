@@ -2153,3 +2153,62 @@ Dataset v2 **evaluation config** (acceptance thresholds, currently `configs/eval
 config against `development`/`validation` only, then running `frozen_test` exactly once after the
 config is recorded/checksummed (spec section K frozen-test protocol). No generator, threshold, or
 seed policy from Phases 0-7 should change.
+
+## Phase 8A (partial) -- Evaluation harness build + smokes + candidate pre-registration
+
+- **Status**: harness BUILT and smoke-validated; candidate set PRE-REGISTERED. Full development
+  selection, the one-shot validation confirmation, and the full development+validation compute are
+  **not** run (explicitly deferred pending user approval). `frozen_test` untouched. Nothing
+  committed or pushed.
+- **Baseline before this phase**: branch `feature/dataset-v2`, commit `dc8d3313`, clean working
+  tree. Full baseline suite = 748 passed (carried from Phase 7 at this same clean commit; the
+  background full run was terminated to free CPU for the targeted/smoke runs, per the session's
+  no-parallel-processes rule -- full-suite re-run is deferred to the full-compute session).
+
+### Files added (all new, additive -- zero modifications to any tracked v1/v2 file)
+
+- **New package `evaluation_v2/`** (15 modules): `protected_guard` (runtime guard + protected
+  field names), `locator` (public/protected/eval-output path bundles), `candidate_configs`
+  (finite candidate set + reporting/convergence tiers), `fingerprints` (config/code/dataset/
+  public/protected/env), `public_export` (build public + protected roots, dev+val only, whitelist
+  strip), `reporting` (coarse/standard/strict classification), `point_eval` (Tier 1),
+  `trajectory_eval` (Tier 2 warm/cold), `tier0_gate` (reuses `evaluation/kinematics_validation`),
+  `metrics` (Tier 1-4 aggregation, reuses `evaluation/*`), `checkpoint` (atomic shards +
+  deterministic resume + fingerprint-gated lock), `orchestrator` (Tier 0->4 for one candidate),
+  `selection` (lexicographic dev-only objective), `lock_bundle` (section 12 scaffold).
+- **New CLIs**: `pipelines/run_dataset_v2_public_export.py`,
+  `pipelines/run_dataset_v2_evaluation.py`, `pipelines/run_dataset_v2_config_selection.py`.
+- **New tests**: `tests/test_dataset_v2_eval_units.py` (23), `tests/test_dataset_v2_eval_harness.py`
+  (10, dataset-dependent, auto-skip if the working root is absent).
+
+### Public/protected isolation
+
+- Public evaluation root `D:\data\hoang_anh\mpdik_kassow_v2_eval_public` built: 1200/1200 point-IK
+  (dev/val), 210/210 trials, 70/70 trajectories, 144 NPZ total, **0 protected keys**, no
+  `frozen_test`. Public bundle fingerprint recorded in `PUBLIC_EXPORT_MANIFEST.json`.
+- Protected validation root `D:\data\hoang_anh\mpdik_kassow_v2_protected_validation` holds
+  `q_target_reference` + `q_reference` content-hash evidence OUTSIDE the public root; a test proves
+  no public `q_initial` equals its reference solution. Runtime guard rejects any protected field
+  reaching the evaluator.
+
+### Candidate DLS configs (pre-registered)
+
+Five candidates (`cand_A_adaptive_baseline`, `cand_B_adaptive_deep`, `cand_C_adaptive_lowdamp`,
+`cand_D_pure_dls`, `cand_E_fixed_damp`) varying only iteration budget / damping / joint-limit
+handling. Shared reporting tiers coarse 6mm/5deg, standard 3mm/2deg (primary), strict 1mm/1deg;
+convergence tolerance = strict tier; generation tolerance 1e-4m/0.01deg explicitly NOT a reporting
+threshold. Written to `candidate_preregistration.json`.
+
+### Smokes (all pass)
+
+- Targeted pytest: `test_dataset_v2_eval_units.py` 23 passed; `test_dataset_v2_eval_harness.py`
+  10 passed (Tier 0 gate smoke, point-IK smoke, warm/cold smoke, resume smoke, 5 isolation tests).
+- CLI smokes into `D:\data\hoang_anh\mpdik_kassow_v2_eval_devval\smoke`: fresh + resume both
+  `overall_status=completed`, Tier 0 gate pass, exact row counts (point 5, waypoint 32 = 2x2x8, no
+  duplicates), all section-9 outputs present, resume reused all shards, `frozen_test_accessed=false`.
+
+### Deferred (pending user approval)
+
+Full development selection (5 candidates x development), one-shot validation confirmation, full
+dev+val compute, evaluation lock bundle finalization, and the final full pytest. `frozen_test`
+remains unopened.
